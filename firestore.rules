@@ -1,0 +1,63 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function signedIn() { return request.auth != null; }
+    function ownerDoc() { return get(/databases/$(database)/documents/mess/owner); }
+    function rolesDoc() { return get(/databases/$(database)/documents/mess/roles); }
+
+    function isOwner() {
+      return signedIn()
+        && exists(/databases/$(database)/documents/mess/owner)
+        && ownerDoc().data.uid == request.auth.uid;
+    }
+    function isAdmin() {
+      return isOwner()
+        || (signedIn()
+            && exists(/databases/$(database)/documents/mess/roles)
+            && request.auth.uid in rolesDoc().data.get('admins', []));
+    }
+    function isEditor() {
+      return isAdmin()
+        || (signedIn()
+            && exists(/databases/$(database)/documents/mess/roles)
+            && request.auth.uid in rolesDoc().data.get('editors', []));
+    }
+
+    // Everything under /mess is readable by signed-in users
+    match /mess/{docId} {
+      allow read: if signedIn();
+    }
+    // First person to sign in claims ownership; it can never be changed afterwards
+    match /mess/owner {
+      allow create: if signedIn() && request.resource.data.uid == request.auth.uid;
+      allow update, delete: if false;
+    }
+    // Members list / name / currency: owner and admins
+    match /mess/config {
+      allow write: if isAdmin();
+    }
+    // Who can add / who is admin / who is linked to which member: owner only
+    match /mess/roles {
+      allow write: if isOwner();
+    }
+
+    // Each person can only write their own "joined" record and profile
+    match /people/{uid} {
+      allow read: if signedIn();
+      allow write: if signedIn() && request.auth.uid == uid;
+    }
+    match /profiles/{uid} {
+      allow read: if signedIn();
+      allow write: if signedIn() && request.auth.uid == uid;
+    }
+
+    // Purchases
+    match /purchases/{id} {
+      allow read: if signedIn();
+      allow create: if isEditor() && request.resource.data.addedBy == request.auth.uid;
+      allow update, delete: if isAdmin()
+        || (isEditor() && resource.data.addedBy == request.auth.uid);
+    }
+  }
+}

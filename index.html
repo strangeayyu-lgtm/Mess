@@ -1,0 +1,872 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Mess Ledger — Roommate Expense Sharing</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.11.1/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.11.1/firebase-auth-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.11.1/firebase-firestore-compat.js"></script>
+<script>
+/* ============================================================
+   FIREBASE SETUP: paste your web-app config here (Firebase console
+   > Project settings > Your apps > SDK setup and configuration).
+   While apiKey still says PASTE..., the app runs in local-only mode.
+   ============================================================ */
+window.MESS_FIREBASE_CONFIG = {
+  apiKey: "AIzaSyAowEnUv8p21aULKq70dGYGj8Jes_GgwDs",
+  authDomain: "mess-b2ada.firebaseapp.com",
+  projectId: "mess-b2ada",
+  appId: "1:360463374396:web:641ca6d8a8ad32c4608b39"
+};
+</script>
+<script>
+/* Adapter: gives the app the same window.claude.use("db"|"user"|"downloads")
+   interface it was written for, backed by Firebase Auth + Firestore. */
+(function(){
+  const cfg = window.MESS_FIREBASE_CONFIG || {};
+  if (!window.firebase || !cfg.apiKey || /^PASTE/.test(cfg.apiKey)) return; // local-only mode
+  firebase.initializeApp(cfg);
+  const auth = firebase.auth(), fs = firebase.firestore();
+  const empty = { name: "", avatarUrl: "" };
+
+  const authReady = new Promise(res => {
+    const off = auth.onAuthStateChanged(u => { off(); res(u); });
+  });
+
+  let boot = null, isOwner = false, viewer = null;
+  async function init(u) {
+    viewer = u;
+    // Profile so other members can see your name/photo
+    try {
+      await fs.doc("profiles/" + u.uid).set({ name: u.displayName || "", avatarUrl: u.photoURL || "", updatedAt: Date.now() }, { merge: true });
+    } catch (e) {}
+    // The first person to sign in becomes the owner (rules allow this claim only once)
+    try {
+      let o = await fs.doc("mess/owner").get();
+      if (!o.exists) {
+        try { await fs.doc("mess/owner").set({ uid: u.uid, claimedAt: Date.now() }); } catch (e) {}
+        o = await fs.doc("mess/owner").get();
+      }
+      isOwner = !!(o.exists && o.data().uid === u.uid);
+    } catch (e) { isOwner = false; }
+  }
+
+  const userApi = {
+    async me() {
+      return { id: viewer.uid, isOwner, name: viewer.displayName || "", avatarUrl: viewer.photoURL || "" };
+    },
+    async can() { return true; },
+    async profiles(ids) {
+      const out = {};
+      await Promise.all((ids || []).map(async id => {
+        try {
+          const s = await fs.doc("profiles/" + id).get();
+          out[id] = s.exists ? { name: s.data().name || "", avatarUrl: s.data().avatarUrl || "" } : empty;
+        } catch (e) { out[id] = empty; }
+      }));
+      return out;
+    }
+  };
+
+  window.messSignIn = async function () {
+    const provider = new firebase.auth.GoogleAuthProvider();
+    try { await auth.signInWithPopup(provider); }
+    catch (e) {
+      if (e && (e.code === "auth/popup-blocked" || e.code === "auth/operation-not-supported-in-this-environment")) {
+        await auth.signInWithRedirect(provider); return;
+      }
+      if (e && (e.code === "auth/popup-closed-by-user" || e.code === "auth/cancelled-popup-request")) return;
+      alert("Sign-in failed: " + (e && e.message ? e.message : e));
+      return;
+    }
+    location.reload();
+  };
+  window.messSignOut = async function () { await auth.signOut(); location.reload(); };
+
+  window.claude = {
+    async use(name) {
+      if (name === "db") {
+        const u = await authReady;
+        if (!u) return null;                       // not signed in -> app shows the login gate
+        if (!boot) boot = init(u);
+        await boot;
+        return fs;
+      }
+      if (name === "user") { await authReady; return viewer ? userApi : null; }
+      throw Object.assign(new Error("not available"), { code: "not_available" }); // downloads: app falls back to normal browser download
+    }
+  };
+})();
+</script>
+<style>
+:root{
+  --bg:#EEF1F6;
+  --glow-a:rgba(40,170,160,.22); --glow-b:rgba(120,100,220,.18); --glow-c:rgba(200,90,130,.12);
+  --card:rgba(255,255,255,.72); --card-hi:rgba(255,255,255,.9); --line:rgba(20,30,50,.12); --line-2:rgba(20,30,50,.08);
+  --ink:#131a26; --ink-2:#3d4757; --muted:#6b7485;
+  --accent:#12b39a; --accent-ink:#04221d; --pos:#0e9f86; --neg:#d6336c;
+  --track:rgba(20,30,50,.08); --field:rgba(20,30,50,.05);
+  color-scheme:light;
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --bg:#060a11;
+    --glow-a:rgba(26,110,110,.55); --glow-b:rgba(92,82,160,.42); --glow-c:rgba(110,45,70,.35);
+    --card:rgba(255,255,255,.035); --card-hi:rgba(255,255,255,.06); --line:rgba(255,255,255,.13); --line-2:rgba(255,255,255,.07);
+    --ink:#EDF1F6; --ink-2:#C7CDD8; --muted:#8C95A6;
+    --accent:#52E5CB; --accent-ink:#062823; --pos:#52E5CB; --neg:#FF6F9C;
+    --track:rgba(255,255,255,.08); --field:rgba(255,255,255,.05);
+    color-scheme:dark;
+  }
+}
+:root[data-theme="dark"]{
+  --bg:#060a11;
+  --glow-a:rgba(26,110,110,.55); --glow-b:rgba(92,82,160,.42); --glow-c:rgba(110,45,70,.35);
+  --card:rgba(255,255,255,.035); --card-hi:rgba(255,255,255,.06); --line:rgba(255,255,255,.13); --line-2:rgba(255,255,255,.07);
+  --ink:#EDF1F6; --ink-2:#C7CDD8; --muted:#8C95A6;
+  --accent:#52E5CB; --accent-ink:#062823; --pos:#52E5CB; --neg:#FF6F9C;
+  --track:rgba(255,255,255,.08); --field:rgba(255,255,255,.05);
+  color-scheme:dark;
+}
+:root{box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}
+html{scroll-padding-top:env(safe-area-inset-top,0px);min-height:100%}
+*,*::before,*::after{box-sizing:inherit}
+body{margin:0;min-height:100vh;color:var(--ink);font-family:"Space Grotesk",system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;font-size:15px;line-height:1.45;-webkit-font-smoothing:antialiased;
+  background:
+    radial-gradient(60% 45% at 0% 0%, var(--glow-a), transparent 70%),
+    radial-gradient(55% 50% at 100% 12%, var(--glow-b), transparent 70%),
+    radial-gradient(70% 45% at 55% 100%, var(--glow-c), transparent 70%),
+    var(--bg);
+  background-attachment:fixed}
+button,input,select{font:inherit;color:inherit}
+button{cursor:pointer}
+:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.mono{font-family:"JetBrains Mono",ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
+.label{font-family:"JetBrains Mono",ui-monospace,Menlo,Consolas,monospace;font-size:12px;letter-spacing:.2em;text-transform:uppercase;color:var(--muted);font-weight:500}
+
+.wrap{max-width:485px;margin:0 auto;padding:34px 0 130px}
+@media (max-width:520px){.wrap{padding:22px 14px 130px}}
+
+/* header */
+.top{display:flex;align-items:center;gap:12px;margin-bottom:28px}
+.logo{width:45px;height:45px;border-radius:10px;background:#fff;display:grid;place-items:center;overflow:hidden;flex:none;color:#1a1a1a;font-weight:700;font-size:13px;letter-spacing:.02em}
+.logo img{width:100%;height:100%;object-fit:cover}
+.title{min-width:0;flex:1}
+.title h1{margin:0;font-size:18px;font-weight:600;line-height:1.2}
+.title p{margin:3px 0 0;font-family:"JetBrains Mono",ui-monospace,Menlo,monospace;font-size:12px;letter-spacing:.14em;text-transform:uppercase;color:var(--muted);line-height:1.6}
+.gear{width:30px;height:30px;border-radius:50%;border:1px solid var(--line);background:var(--card);display:grid;place-items:center;color:var(--muted);flex:none;text-decoration:none;font-size:15px}
+.monthpill{display:flex;align-items:center;gap:6px;border:1px solid var(--line);background:var(--card);border-radius:999px;padding:6px 10px;flex:none}
+.monthpill button{border:0;background:transparent;color:var(--ink-2);width:22px;height:30px;font-size:15px;font-family:"JetBrains Mono",monospace}
+.monthpill .m{font-family:"JetBrains Mono",monospace;font-size:13px;letter-spacing:.1em;text-transform:uppercase;line-height:1.5;min-width:92px}
+
+.badge{display:inline-block;margin-top:6px;font-family:"JetBrains Mono",monospace;font-size:11px;letter-spacing:.08em;padding:3px 9px;border-radius:999px;border:1px solid var(--line);color:var(--accent)}
+.badge.view{color:var(--muted)}
+
+/* tabs */
+.tabs{display:grid;grid-template-columns:1fr 1fr;border:1px solid var(--line);background:var(--card);border-radius:16px;padding:5px;margin-bottom:22px}
+.tabs button{border:0;background:transparent;padding:9px;border-radius:12px;font-family:"JetBrains Mono",monospace;font-size:13px;letter-spacing:.18em;text-transform:uppercase;color:var(--muted)}
+.tabs button[aria-selected="true"]{background:var(--accent);color:var(--accent-ink);font-weight:500}
+
+.stack{display:grid;gap:16px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:18px;padding:22px 20px;-webkit-backdrop-filter:blur(14px);backdrop-filter:blur(14px);min-width:0}
+.card .label{margin-bottom:14px}
+
+.hero .big{font-size:44px;font-weight:600;letter-spacing:-.01em;line-height:1.1;margin:6px 0 12px}
+.hero .sub{color:var(--muted);font-size:15px}
+
+.pm{padding:4px 0 10px}
+.pm-h{display:flex;justify-content:space-between;align-items:baseline;gap:10px}
+.pm-h .n{font-weight:500}
+.pm-h .v{font-family:"JetBrains Mono",monospace;font-size:14px;color:var(--ink-2)}
+.track{height:6px;background:var(--track);border-radius:99px;margin-top:8px;overflow:hidden}
+.track i{display:block;height:100%;border-radius:99px;transition:width .4s ease}
+
+.day{font-family:"JetBrains Mono",monospace;font-size:13px;letter-spacing:.18em;text-transform:uppercase;color:var(--muted);margin:14px 5px 10px}
+.row{display:flex;align-items:center;gap:12px;background:var(--card);border:1px solid var(--line);border-radius:14px;padding:0 14px;min-height:56px;margin-bottom:8px}
+.row .dot{width:9px;height:9px;border-radius:50%;flex:none}
+.row .it{flex:1;min-width:0;font-weight:500;font-size:16px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;background:none;border:0;text-align:left;padding:16px 0}
+.row .it small{display:block;font-size:12px;color:var(--muted);font-weight:400}
+.row .who{color:var(--muted);font-size:14px;white-space:nowrap}
+.row .amt{font-family:"JetBrains Mono",monospace;font-weight:600;font-size:16px;white-space:nowrap}
+.row .x{border:0;background:transparent;color:var(--muted);font-size:16px;width:24px;height:32px;padding:0;flex:none;border-radius:8px}
+.row .x.sure{width:auto;padding:0 8px;background:var(--neg);color:#fff;font-size:12px;font-weight:600}
+.empty{text-align:center;color:var(--muted);padding:26px 10px}
+
+.dl{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.btn{border:1px solid var(--line);background:var(--card);border-radius:14px;padding:11px 12px;font-weight:600;font-size:15px;display:flex;align-items:center;justify-content:center;gap:6px}
+.btn:hover{background:var(--card-hi)}
+.btn.primary{background:var(--accent);color:var(--accent-ink);border-color:transparent;border-radius:999px;padding:15px;font-weight:500;font-size:17px}
+.btn.danger{color:var(--neg)}
+.btn:disabled{opacity:.6}
+
+.owe{display:flex;align-items:center;gap:14px;padding:8px 0}
+.av{width:35px;height:35px;border-radius:50%;display:grid;place-items:center;font-family:"JetBrains Mono",monospace;font-weight:600;font-size:13px;color:#1b1b22;flex:none}
+.owe .t{flex:1;min-width:0;font-size:16px}
+.owe .t em{font-style:normal;color:var(--accent)}
+.owe .v{font-family:"JetBrains Mono",monospace;font-weight:600;font-size:16px}
+
+.bal{display:flex;align-items:center;gap:12px;padding:14px 0}
+.bal+.bal{border-top:1px solid var(--line-2)}
+.bal .n{flex:1;font-size:17px;font-weight:500}
+.bal .r{text-align:right;font-family:"JetBrains Mono",monospace;font-size:14px;color:var(--ink-2);line-height:1.5}
+.bal .r .d{display:block;font-size:13px}
+.pos{color:var(--pos)} .neg{color:var(--neg)} .zero{color:var(--muted)}
+
+.sum{display:grid;grid-template-columns:repeat(3,1fr);text-align:center;gap:6px}
+.sum strong{display:block;font-family:"JetBrains Mono",monospace;font-size:22px;font-weight:600;margin-bottom:6px}
+
+.join .chips{display:flex;flex-wrap:wrap;gap:8px;margin-top:4px}
+.chip{border:1px solid var(--line);background:var(--field);border-radius:999px;padding:8px 14px;display:flex;align-items:center;gap:8px;font-weight:500}
+.chip .dot{width:9px;height:9px;border-radius:50%}
+.chip[aria-pressed="true"]{background:var(--accent);color:var(--accent-ink);border-color:transparent}
+.join p{margin:0 0 10px;color:var(--muted)}
+
+.fab{position:fixed;left:50%;transform:translateX(-50%);bottom:calc(20px + env(safe-area-inset-bottom,0px));z-index:20;background:var(--accent);color:var(--accent-ink);border:0;border-radius:999px;padding:14px 26px;font-weight:500;font-size:17px;display:flex;align-items:center;gap:10px;box-shadow:0 10px 30px -8px rgba(0,0,0,.5)}
+
+.ro{font-size:13px;color:var(--muted);text-align:center;margin-top:16px}
+.sync{font-family:"JetBrains Mono",monospace;font-size:11px;letter-spacing:.08em;color:var(--muted);text-align:center;margin-top:18px}
+
+/* sheet (add purchase) */
+.scrim{position:fixed;inset:0;background:rgba(3,6,10,.6);z-index:40;display:none;align-items:flex-end;justify-content:center;-webkit-backdrop-filter:blur(3px);backdrop-filter:blur(3px)}
+.scrim.open{display:flex}
+.sheet{width:100%;max-width:485px;max-height:92vh;overflow:auto;background:var(--bg);background-image:linear-gradient(var(--card-hi),var(--card-hi));border:1px solid var(--line);border-radius:22px 22px 0 0;padding:22px 20px calc(22px + env(safe-area-inset-bottom,0px));animation:up .2s ease}
+@keyframes up{from{transform:translateY(20px);opacity:.5}to{transform:none;opacity:1}}
+@media (min-width:600px){.scrim{align-items:center}.sheet{border-radius:22px}}
+@media (prefers-reduced-motion:reduce){.sheet{animation:none}.track i{transition:none}}
+.sheet-h{display:flex;align-items:center;justify-content:space-between;margin-bottom:18px}
+.sheet-h h3{margin:0;font-size:20px;font-weight:600}
+.close{width:34px;height:34px;border-radius:50%;border:1px solid var(--line);background:transparent;color:var(--muted)}
+.field{display:block;margin-bottom:16px}
+.field>.label{display:block;margin-bottom:8px}
+.input{width:100%;background:var(--field);border:1px solid var(--line);border-radius:12px;padding:12px 14px;outline:none;font-size:16px}
+.input:focus{border-color:var(--accent)}
+select.input{appearance:auto}
+.amtwrap{position:relative}
+.amtwrap b{position:absolute;left:14px;top:50%;transform:translateY(-50%);color:var(--muted);font-family:"JetBrains Mono",monospace;font-weight:600}
+.amtwrap .input{padding-left:calc(22px + var(--symw,1ch));font-family:"JetBrains Mono",monospace;font-size:20px;font-weight:600}
+.err{color:var(--neg);font-size:13px;min-height:18px;margin:-6px 0 8px}
+.actions{display:flex;gap:10px}
+.actions .btn{flex:1}
+
+/* settings page */
+.page[hidden]{display:none}
+.shead{display:flex;align-items:center;gap:14px;margin-bottom:30px}
+.back{width:38px;height:38px;border-radius:50%;border:1px solid var(--line);background:var(--card);display:grid;place-items:center;font-size:18px;color:var(--ink-2)}
+.shead h2{margin:0;font-size:19px;font-weight:600}
+.slabel{font-family:"JetBrains Mono",monospace;font-size:12px;letter-spacing:.2em;text-transform:uppercase;color:var(--muted);margin:0 0 12px}
+.scard{background:var(--card);border:1px solid var(--line);border-radius:18px;padding:20px;margin-bottom:30px}
+.logo-row{display:flex;align-items:center;gap:16px}
+.logo-row .logo{width:60px;height:60px;border-radius:10px}
+.pillbtn{border:0;background:var(--field);border:1px solid var(--line-2);border-radius:999px;padding:8px 14px;font-weight:500;cursor:pointer;display:inline-block}
+.mem{display:flex;align-items:center;gap:12px}
+.mem+.mem{margin-top:14px}
+.mem .dot{width:11px;height:11px;border-radius:50%;flex:none}
+.mem .input{flex:1;background:var(--card-hi);border-color:transparent;font-size:17px}
+.mem .cnt{font-family:"JetBrains Mono",monospace;font-size:12px;color:var(--muted);min-width:14px;text-align:center}
+.mem .rm{border:0;background:transparent;color:var(--muted);font-size:16px;width:26px;height:34px;border-radius:8px;flex:none}
+.mem .rm.sure{width:auto;padding:0 8px;background:var(--neg);color:#fff;font-size:12px;font-weight:600}
+.addcard{display:flex;gap:10px;background:var(--card);border:1px solid var(--line);border-radius:18px;padding:14px;margin:14px 0 18px}
+.addcard .input{flex:1}
+.addbtn{border:0;border-radius:999px;background:rgba(82,229,203,.22);color:var(--accent);padding:0 18px;font-weight:600}
+.snote{color:var(--muted);font-size:15px;margin:0 0 26px;line-height:1.5}
+.person{display:flex;align-items:center;gap:12px;padding:10px 0}
+.person+.person{border-top:1px solid var(--line-2)}
+.person img{width:35px;height:35px;border-radius:50%;object-fit:cover;flex:none}
+.person .t{flex:1;min-width:0}
+.person .t b{display:block;font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.person .t span{font-size:13px;color:var(--muted)}
+.seg{display:flex;border:1px solid var(--line);border-radius:999px;padding:3px;flex:none}
+.seg button{border:0;background:transparent;border-radius:999px;padding:6px 10px;font-family:"JetBrains Mono",monospace;font-size:11px;letter-spacing:.06em;color:var(--muted)}
+.seg button[aria-pressed="true"]{background:var(--accent);color:var(--accent-ink)}
+.help{color:var(--muted);font-size:14px;margin:0 0 12px}
+.help ol{margin:6px 0 0;padding-left:18px}
+.help b{color:var(--ink-2);font-weight:600}
+
+.toast{position:fixed;left:50%;top:calc(16px + env(safe-area-inset-top,0px));transform:translateX(-50%);background:var(--ink);color:var(--bg);padding:10px 16px;border-radius:12px;font-weight:500;font-size:14px;z-index:60;opacity:0;pointer-events:none;transition:opacity .2s;max-width:90vw;text-align:center}
+.toast.show{opacity:1}
+</style>
+</head>
+<body>
+
+<!-- ============ MAIN PAGE ============ -->
+<div class="wrap page" id="mainPage">
+  <header class="top">
+    <div class="logo" id="logo"></div>
+    <div class="title">
+      <h1 id="messName">Mess Ledger</h1>
+      <p id="memberLine"></p>
+      <div id="roleBadge"></div>
+    </div>
+    <button class="gear" id="openSettings" aria-label="Settings">⚙</button>
+    <div class="monthpill">
+      <button id="prevM" aria-label="Previous month">&lt;</button>
+      <div class="m" id="monthLabel"></div>
+      <button id="nextM" aria-label="Next month">&gt;</button>
+    </div>
+  </header>
+
+  <div class="tabs" role="tablist">
+    <button role="tab" aria-selected="true" data-tab="ledger">Ledger</button>
+    <button role="tab" aria-selected="false" data-tab="report">Month report</button>
+  </div>
+
+  <main class="stack" id="content"></main>
+  <div class="ro" id="roNote" hidden></div>
+  <div class="sync" id="sync"></div>
+</div>
+
+<!-- ============ SETTINGS PAGE ============ -->
+<div class="wrap page" id="settingsPage" hidden>
+  <div class="shead"><button class="back" id="backBtn" aria-label="Back">←</button><h2>Settings</h2></div>
+
+  <div class="slabel">Mess logo</div>
+  <div class="scard">
+    <div class="logo-row">
+      <div class="logo" id="sLogo"></div>
+      <label class="pillbtn">Upload logo<input type="file" accept="image/*" id="logoFile" hidden></label>
+      <button class="pillbtn" id="logoRemove" hidden>Remove</button>
+    </div>
+  </div>
+
+  <div class="slabel">Mess name &amp; currency</div>
+  <div class="scard" style="display:grid;gap:12px">
+    <input class="input" id="sName" maxlength="40" placeholder="Mess name">
+    <select class="input" id="sCur" aria-label="Currency"></select>
+  </div>
+
+  <div class="slabel">Mess members</div>
+  <div class="scard" id="sMembers" style="margin-bottom:0"></div>
+  <div class="addcard"><input class="input" id="newMember" placeholder="New member name" maxlength="24"><button class="addbtn" id="addMember">+ Add</button></div>
+  <p class="snote">Renaming updates every purchase and monthly report. Removing a member also deletes their purchase records.</p>
+  <div class="err" id="sErr"></div>
+  <button class="btn primary" id="saveSettings" style="width:100%">Save names</button>
+
+  <div id="accessSec" style="margin-top:34px"></div>
+</div>
+
+<button class="fab" id="fab"><span style="font-size:20px;line-height:1">+</span>Add purchase</button>
+
+<!-- ============ ADD PURCHASE SHEET ============ -->
+<div class="scrim" id="pScrim">
+  <div class="sheet" role="dialog" aria-modal="true" aria-labelledby="pTitle">
+    <div class="sheet-h"><h3 id="pTitle">Add purchase</h3><button class="close" data-close aria-label="Close">✕</button></div>
+    <label class="field"><span class="label">Item</span><input class="input" id="pItem" placeholder="Fish & vegetables" maxlength="60"></label>
+    <label class="field"><span class="label">Amount</span><div class="amtwrap"><b id="curSym">₹</b><input class="input" id="pAmt" inputmode="decimal" placeholder="0.00"></div></label>
+    <div class="field"><span class="label">Paid by</span><div class="join"><div class="chips" id="pPayer"></div></div></div>
+    <label class="field"><span class="label">Date</span><input class="input" type="date" id="pDate"></label>
+    <div class="err" id="pErr"></div>
+    <div class="actions">
+      <button class="btn danger" id="pDelete" hidden>Delete</button>
+      <button class="btn primary" id="pSave" style="border-radius:14px">Save purchase</button>
+    </div>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+(function(){
+const COLORS=["#1F9D6A","#8B6CE0","#E3A21A","#E0567A","#2F86D6","#D2642E","#14A3A3","#9C8A2E"];
+const LS="mess-ledger-v1";
+const $=s=>document.querySelector(s);
+const esc=s=>String(s==null?"":s).replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+const uid=()=>Math.random().toString(36).slice(2,10)+Date.now().toString(36).slice(-4);
+const CURRENCIES=[["SAR","Saudi riyal"],["INR","Indian rupee"],["AED","UAE dirham"],["QAR","Qatari riyal"],["OMR","Omani rial"],["KWD","Kuwaiti dinar"],["BHD","Bahraini dinar"],["USD","US dollar"]];
+const cur=()=>(typeof config!=="undefined"&&config.currency)||"SAR";
+const r2=n=>Math.round((+n||0)*100)/100;
+const numStr=n=>{n=r2(n);const whole=Math.abs(n-Math.round(n))<1e-9;return n.toLocaleString("en-IN",{minimumFractionDigits:whole?0:2,maximumFractionDigits:2})};
+const fmt=n=>curSymbol(cur())+" "+numStr(n);
+const fmtSigned=n=>{const sy=curSymbol(cur());return (r2(n)>0?"+":r2(n)<0?"−":"")+sy+(sy.length>1?" ":"")+numStr(Math.abs(n))};
+const fmtPlain=n=>cur()+" "+r2(n).toLocaleString("en-IN",{minimumFractionDigits:2,maximumFractionDigits:2});
+const curSymbol=c=>{try{return new Intl.NumberFormat("en-IN",{style:"currency",currency:c}).formatToParts(0).find(p=>p.type==="currency").value}catch(e){return c}};
+function parseAmount(v){v=String(v).trim().replace(/\s/g,"");if(v.includes(",")&&!v.includes("."))v=v.replace(",",".");else v=v.replace(/,/g,"");const n=Number(v);return isFinite(n)?r2(n):NaN}
+const pad=n=>String(n).padStart(2,"0");
+const today=()=>{const d=new Date();return d.getFullYear()+"-"+pad(d.getMonth()+1)+"-"+pad(d.getDate())};
+const mk=(y,m)=>y+"-"+pad(m+1);
+const initials=n=>(n||"M").trim().split(/\s+/).map(w=>w[0]).join("").slice(0,3).toUpperCase();
+
+/* ---------- state ---------- */
+let mode="local";                 // "local" until shared storage connects
+let config={name:"Mess Ledger",logo:"",members:[],currency:"SAR"};
+let roles={editors:[],admins:[],links:{}};  // links: userId -> memberId, set by the owner
+let people={};                    // userId -> {memberId}
+let profiles={};                  // userId -> {name,avatarUrl}
+let purchases=[];                 // current month (shared) or all (local)
+let me={id:null,isOwner:true,canWrite:true,name:"",avatarUrl:""};
+let view={y:new Date().getFullYear(),m:new Date().getMonth(),tab:"ledger"};
+let db=null,user=null,downloads=null,unsubMonth=null;
+
+/* local fallback store */
+let local={name:"Mess Ledger",logo:"",members:[],purchases:[]};
+function loadLocal(){try{const r=localStorage.getItem(LS);if(r){const s=JSON.parse(r);if(s&&Array.isArray(s.members))local=Object.assign(local,s)}}catch(e){}}
+function saveLocal(){try{localStorage.setItem(LS,JSON.stringify(local))}catch(e){}}
+function useLocal(){config={name:local.name,logo:local.logo,members:local.members,currency:local.currency||"SAR"};purchases=local.purchases}
+
+/* ---------- permissions ---------- */
+const isOwner=()=>mode==="local"||(mode==="shared"&&me.isOwner);
+const isAdmin=()=>isOwner()||(mode==="shared"&&me.canWrite&&roles.admins.includes(me.id));
+const canManage=()=>isAdmin();
+const canAdd=()=>mode==="local"||(mode==="shared"&&me.canWrite&&(isAdmin()||roles.editors.includes(me.id)));
+const canEditPurchase=p=>isAdmin()||(canAdd()&&p.addedBy&&p.addedBy===me.id);
+const roleOf=id=>roles.admins.includes(id)?"admin":roles.editors.includes(id)?"add":"view";
+const linkOf=id=>(roles.links||{})[id]||null;
+const joined=()=>!!(me.id&&linkOf(me.id));
+
+/* ---------- toast + sync status ---------- */
+let tt;function toast(t){const e=$("#toast");e.textContent=t;e.classList.add("show");clearTimeout(tt);tt=setTimeout(()=>e.classList.remove("show"),2600)}
+function syncMsg(t){$("#sync").textContent=t||""}
+function failMsg(e){
+  const c=e&&e.code;
+  if(c==="invalid_argument"||c==="not_granted"||c==="permission-denied")return "You don't have permission to save here.";
+  if(c==="quota_exceeded")return "Storage is full. Delete some old entries.";
+  if(c==="resource_exhausted")return "Too many changes at once. Try again in a moment.";
+  return "Couldn't save. Check your connection and try again.";
+}
+
+/* ---------- writes ---------- */
+async function writePurchase(p){
+  if(mode==="local"){const i=local.purchases.findIndex(x=>x.id===p.id);if(i>=0)local.purchases[i]=p;else local.purchases.push(p);saveLocal();useLocal();render();return true}
+  const idx=purchases.findIndex(x=>x.id===p.id);const prev=idx>=0?purchases[idx]:null;
+  // optimistic
+  if(idx>=0)purchases[idx]=p;else purchases.push(p);render();
+  try{const {id,...body}=p;await db.collection("purchases").doc(id).set(body);return true}
+  catch(e){if(prev)purchases[idx]=prev;else purchases=purchases.filter(x=>x.id!==p.id);render();toast(failMsg(e));return false}
+}
+async function deletePurchase(id){
+  if(mode==="local"){local.purchases=local.purchases.filter(p=>p.id!==id);saveLocal();useLocal();render();return true}
+  const keep=purchases;purchases=purchases.filter(p=>p.id!==id);render();
+  try{await db.collection("purchases").doc(id).delete();return true}
+  catch(e){purchases=keep;render();toast(failMsg(e));return false}
+}
+async function writeConfig(c){
+  if(mode==="local"){Object.assign(local,c);saveLocal();useLocal();render();return true}
+  try{await db.doc("mess/config").set(c);config=c;render();return true}
+  catch(e){toast(failMsg(e));return false}
+}
+async function writeRoles(r){
+  try{await db.doc("mess/roles").set(r);roles=r;render();return true}
+  catch(e){toast(failMsg(e));return false}
+}
+
+/* ---------- calculations ---------- */
+function monthData(){
+  const key=mk(view.y,view.m);
+  const list=purchases.filter(p=>p.date&&p.date.slice(0,7)===key);
+  const C=v=>Math.round((+v||0)*100);            // work in cents so 5.3 + 4.4 is exactly 9.70
+  const totalC=list.reduce((a,p)=>a+C(p.amount),0);
+  const n=config.members.length||1, shareC=totalC/n;
+  const paidC={};config.members.forEach(m=>paidC[m.id]=0);
+  list.forEach(p=>{if(p.payer in paidC)paidC[p.payer]+=C(p.amount)});
+  const bal=config.members.map(m=>({m,paid:paidC[m.id]/100,balC:paidC[m.id]-shareC,bal:(paidC[m.id]-shareC)/100}));
+  const cr=bal.filter(b=>b.balC>=0.5).map(b=>({m:b.m,v:b.balC})).sort((a,b)=>b.v-a.v);
+  const dr=bal.filter(b=>b.balC<=-0.5).map(b=>({m:b.m,v:-b.balC})).sort((a,b)=>b.v-a.v);
+  const tx=[];let i=0,j=0;
+  while(i<dr.length&&j<cr.length){
+    const x=Math.min(dr[i].v,cr[j].v);
+    if(Math.round(x)>=1)tx.push({from:dr[i].m,to:cr[j].m,amt:Math.round(x)/100});
+    dr[i].v-=x;cr[j].v-=x;if(dr[i].v<0.5)i++;if(cr[j].v<0.5)j++;
+  }
+  return{list,total:totalC/100,share:shareC/100,bal,tx};
+}
+const member=id=>config.members.find(m=>m.id===id);
+
+/* ---------- render ---------- */
+const PALETTE=["#52E5CB","#A78BFA","#F5B942","#F472B6","#60A5FA","#FB923C","#34D399","#E879F9"];
+const colorAt=i=>PALETTE[((i%PALETTE.length)+PALETTE.length)%PALETTE.length];
+const colorOf=m=>colorAt(Math.max(0,config.members.findIndex(x=>x.id===(m&&m.id))));
+function logoHTML(logo,name){return logo?`<img src="${logo}" alt="Mess logo">`:esc(initials(name))}
+function roleBadge(){
+  if(mode!=="shared")return "";
+  const role=me.isOwner?"Owner":isAdmin()?"Admin":canAdd()?"Can add":"View only";
+  const m=joined()?member(linkOf(me.id)):null;
+  const nm=me.name||(m&&m.name)||"You";
+  const av=me.avatarUrl?`<img src="${esc(me.avatarUrl)}" alt="" style="width:16px;height:16px;border-radius:50%;vertical-align:-3px;margin-right:6px">`:"";
+  return `<span class="badge${canAdd()?"":" view"}" title="Signed in with Google">${av}${esc(nm)} · ${role}</span>`;
+}
+function joinCard(){return ""}
+const MON=["Jan","Feb","Mar","Apr","May","June","July","Aug","Sept","Oct","Nov","Dec"];
+const settingsOpen=()=>!$("#settingsPage").hidden;
+function gateHTML(){
+  if(mode==="loading")return `<div class="card empty">Checking your sign-in…</div>`;
+  return `<div class="card" style="text-align:center;padding:34px 22px">
+    <div class="label" style="margin-bottom:10px">Login required</div>
+    <div style="font-size:22px;font-weight:600;margin-bottom:8px">Sign in to open this ledger</div>
+    <p style="color:var(--muted);margin:0 0 20px">Sign in with your Google account. If you can't add or edit after signing in, ask the owner to give you access.</p>
+    <button class="btn primary" id="googleLogin" style="width:100%">Sign in with Google</button></div>`;
+}
+function render(){
+  if(mode==="loading"||mode==="gate"){
+    $("#content").innerHTML=gateHTML();$("#fab").hidden=true;$("#openSettings").hidden=true;$("#roleBadge").innerHTML="";
+    $("#memberLine").textContent="";$("#monthLabel").textContent=new Date(view.y,view.m,1).toLocaleString("en-US",{month:"long"})+" "+view.y;
+    $("#logo").innerHTML=logoHTML("",config.name);
+    const g=$("#googleLogin");if(g)g.onclick=()=>window.messSignIn&&window.messSignIn();
+    $("#roNote").hidden=true;return;
+  }
+  $("#logo").innerHTML=logoHTML(config.logo,config.name);
+  $("#messName").textContent=config.name||"Mess Ledger";
+  $("#memberLine").textContent=config.members.length?config.members.map(m=>m.name).join(" · "):"No members yet";
+  $("#roleBadge").innerHTML=roleBadge();
+  const d=new Date(view.y,view.m,1);
+  $("#monthLabel").textContent=d.toLocaleString("en-US",{month:"long"})+" "+view.y;
+  const abbr=MON[view.m];
+  const D=monthData();
+  const n=config.members.length;
+
+  const hero=`<div class="card hero"><div class="label" style="margin:0">Total spent · ${esc(abbr)}</div>
+    <div class="big">${fmt(D.total)}</div>
+    <div class="sub">${n?`Split across ${n} member${n>1?"s":""} · ${fmt(D.share)} each`:"Add members in settings to start"}</div></div>`;
+
+  let h="";
+  if(view.tab==="ledger"){
+    h+=joinCard()+hero;
+    if(n){
+      const max=Math.max(1,...D.bal.map(b=>b.paid));
+      h+=`<div class="card"><div class="label">Per-member paid</div>`+D.bal.map(b=>`<div class="pm"><div class="pm-h"><span class="n">${esc(b.m.name)} paid</span><span class="v">${fmt(b.paid)}</span></div><div class="track"><i style="width:${(b.paid/max*100).toFixed(1)}%;background:${colorOf(b.m)}"></i></div></div>`).join("")+`</div>`;
+    }
+    if(!D.list.length){
+      h+=`<div class="empty">No purchases this month</div>`;
+    }else{
+      const sorted=[...D.list].sort((a,b)=>b.date.localeCompare(a.date)||(b.created||0)-(a.created||0));
+      let cur="",block="";
+      sorted.forEach(p=>{
+        if(p.date!==cur){cur=p.date;const dd=new Date(p.date+"T00:00");
+          block+=`<div class="day">${dd.toLocaleDateString("en-GB",{weekday:"short"})}, ${dd.getDate()} ${MON[dd.getMonth()]}</div>`}
+        const m=member(p.payer);const editable=canEditPurchase(p);
+        const adder=mode==="shared"&&p.addedBy?"Added by "+addedByName(p.addedBy):"";
+        block+=`<div class="row"><i class="dot" style="background:${m?colorOf(m):"#888"}"></i>
+          <button class="it" data-edit="${p.id}" title="${esc(adder)}">${esc(p.item)}</button>
+          <span class="who">${m?esc(m.name):"Removed"}</span><span class="amt">${fmt(p.amount)}</span>
+          ${editable?`<button class="x" data-del="${p.id}" aria-label="Delete ${esc(p.item)}">×</button>`:""}</div>`;
+      });
+      h+=`<div>${block}</div>`;
+    }
+  }else{
+    h+=hero;
+    h+=`<div class="dl"><button class="btn" id="dlCsv">↓ Download CSV</button><button class="btn" id="dlPdf">↓ Download PDF</button></div>`;
+    h+=`<div class="card"><div class="label">Who owes whom</div>`+(D.tx.length?D.tx.map(t=>`<div class="owe"><div class="av" style="background:${colorOf(t.from)}">${esc((t.from.name[0]||"?").toUpperCase())}</div><div class="t">${esc(t.from.name)} pays <em>${esc(t.to.name)}</em></div><div class="v">${fmt(t.amt)}</div></div>`).join("")
+      :`<div class="zero" style="padding:4px 0">${D.total?"Everyone is settled up.":"Nothing to settle yet."}</div>`)+`</div>`;
+    if(n){
+      const monthFull=d.toLocaleString("en-US",{month:"long"})+" "+view.y;
+      h+=`<div class="card" style="padding-bottom:10px"><div class="label" style="margin-bottom:4px">Member balances · ${esc(monthFull)}</div>`+D.bal.map(b=>{
+        const cls=b.balC>=0.5?"pos":b.balC<=-0.5?"neg":"zero";
+        return `<div class="bal"><div class="av" style="background:${colorOf(b.m)}">${esc((b.m.name[0]||"?").toUpperCase())}</div><div class="n">${esc(b.m.name)}</div>
+          <div class="r">paid ${fmt(b.paid)}<span class="d ${cls}">${cls==="zero"?"settled":fmtSigned(b.bal)}</span></div></div>`}).join("")+`</div>`;
+    }
+    h+=`<div class="card"><div class="label">Month summary</div><div class="sum">
+      <div><strong>${D.list.length}</strong><span class="label" style="letter-spacing:.16em">Purchases</span></div>
+      <div><strong>${fmt(D.total)}</strong><span class="label" style="letter-spacing:.16em">Total</span></div>
+      <div><strong>${fmt(D.share)}</strong><span class="label" style="letter-spacing:.16em">Per head</span></div></div></div>`;
+  }
+  $("#content").innerHTML=h;
+
+  document.querySelectorAll("[data-tab]").forEach(b=>b.setAttribute("aria-selected",b.dataset.tab===view.tab));
+  const c=$("#dlCsv");if(c)c.onclick=dlCSV;
+  const pdf=$("#dlPdf");if(pdf)pdf.onclick=dlPDF;
+  document.querySelectorAll("[data-edit]").forEach(b=>b.onclick=()=>openPurchase(b.dataset.edit));
+  document.querySelectorAll("[data-del]").forEach(b=>b.onclick=()=>armConfirm(b,"Delete?",async()=>{if(await deletePurchase(b.dataset.del))toast("Purchase deleted")}));
+  document.querySelectorAll("[data-join]").forEach(b=>b.onclick=()=>joinAs(b.dataset.join));
+
+  $("#fab").hidden=!canAdd()||settingsOpen();
+  $("#openSettings").hidden=!canManage();
+  const ro=$("#roNote");
+  if(!canAdd()&&mode==="shared"){ro.hidden=false;ro.textContent="You can view everything. The owner decides who can add purchases."}
+  else ro.hidden=true;
+}
+function addedByName(id){
+  if(id===me.id)return "you";
+  const pm=member(linkOf(id));
+  if(pm)return pm.name;
+  return (profiles[id]&&profiles[id].name)||"owner";
+}
+
+/* ---------- sheets ---------- */
+function openSheet(id){$(id).classList.add("open")}
+function closeSheets(){document.querySelectorAll(".scrim").forEach(s=>s.classList.remove("open"))}
+document.querySelectorAll("[data-close]").forEach(b=>b.onclick=closeSheets);
+document.querySelectorAll(".scrim").forEach(s=>s.addEventListener("click",e=>{if(e.target===s)closeSheets()}));
+document.addEventListener("keydown",e=>{if(e.key==="Escape")closeSheets()});
+
+/* two-tap confirm (browser confirm() dialogs are blocked inside artifacts) */
+function armConfirm(btn,label,action){
+  if(btn.dataset.armed){action();return}
+  btn.dataset.armed="1";const old=btn.innerHTML;btn.innerHTML=label;btn.classList.add("sure");
+  setTimeout(()=>{if(btn.isConnected){delete btn.dataset.armed;btn.innerHTML=old;btn.classList.remove("sure")}},3000);
+}
+
+let editing=null,payerSel=null,busy=false;
+function openPurchase(id){
+  const p=id?purchases.find(x=>x.id===id):null;
+  if(p&&!canEditPurchase(p)){toast(canAdd()?"You can only edit entries you added.":"View only");return}
+  if(!p&&!canAdd()){toast("View only");return}
+  if(!config.members.length){if(canManage())openSettings();return}
+  editing=p;
+  $("#pTitle").textContent=p?"Edit purchase":"Add purchase";
+  $("#pItem").value=p?p.item:"";
+  $("#pAmt").value=p?p.amount:"";
+  const mine=linkOf(me.id);
+  payerSel=p?p.payer:(payerSel&&member(payerSel)?payerSel:(mine&&member(mine)?mine:config.members[0].id));
+  const now=new Date();const inView=now.getFullYear()===view.y&&now.getMonth()===view.m;
+  $("#pDate").value=p?p.date:(inView?today():mk(view.y,view.m)+"-01");
+  const del=$("#pDelete");del.hidden=!p;delete del.dataset.armed;del.textContent="Delete";del.classList.remove("sure");
+  $("#pErr").textContent="";$("#pSave").disabled=false;$("#pSave").textContent="Save purchase";
+  const sym=curSymbol(cur());$("#curSym").textContent=sym;$("#pAmt").parentElement.style.setProperty("--symw",(sym.length*0.62+0.4)+"em");
+  drawPayers();openSheet("#pScrim");setTimeout(()=>$("#pItem").focus(),60);
+}
+function drawPayers(){
+  $("#pPayer").innerHTML=config.members.map(m=>`<button class="chip" aria-pressed="${m.id===payerSel}" data-m="${m.id}"><i class="dot" style="background:${colorOf(m)}"></i>${esc(m.name)}</button>`).join("");
+  document.querySelectorAll("#pPayer .chip").forEach(c=>c.onclick=()=>{payerSel=c.dataset.m;drawPayers()});
+}
+$("#pSave").onclick=async()=>{
+  if(busy)return;
+  const item=$("#pItem").value.trim();
+  const amount=parseAmount($("#pAmt").value);
+  const date=$("#pDate").value;
+  if(!item){$("#pErr").textContent="Enter what you bought.";return}
+  if(!(amount>0)){$("#pErr").textContent="Enter an amount above zero.";return}
+  if(!date){$("#pErr").textContent="Pick a date.";return}
+  if(!member(payerSel)){$("#pErr").textContent="Choose who paid.";return}
+  const p=editing?{...editing,item,amount,payer:payerSel,date}:{id:uid(),item,amount,payer:payerSel,date,created:Date.now(),addedBy:me.id||null};
+  const [y,m]=date.split("-").map(Number);
+  const wasEdit=!!editing;
+  busy=true;$("#pSave").disabled=true;$("#pSave").textContent="Saving…";
+  if(y!==view.y||m-1!==view.m){view.y=y;view.m=m-1;subscribeMonth()}
+  closeSheets();
+  const ok=await writePurchase(p);
+  busy=false;
+  if(ok)toast(wasEdit?"Purchase updated":"Purchase saved");
+};
+$("#pDelete").onclick=e=>{
+  if(!editing)return;
+  armConfirm(e.currentTarget,"Tap again to delete",async()=>{const id=editing.id;closeSheets();if(await deletePurchase(id))toast("Purchase deleted")});
+};
+$("#pAmt").addEventListener("keydown",e=>{if(e.key==="Enter")$("#pSave").click()});
+
+/* ---------- join ---------- */
+async function joinAs(memberId){
+  try{await db.doc("people/"+me.id).set({memberId,joinedAt:Date.now()});people[me.id]={memberId};render();toast("Done. The owner can now give you access.")}
+  catch(e){toast(failMsg(e))}
+}
+
+/* ---------- settings page ---------- */
+let draft=null,counts={};
+function showPage(settings){
+  $("#mainPage").hidden=settings;$("#settingsPage").hidden=!settings;
+  window.scrollTo(0,0);render();
+}
+function openSettings(){
+  if(!canManage()){toast("Only the owner can change settings");return}
+  draft={name:config.name,logo:config.logo,currency:cur(),members:config.members.map(m=>({...m})),removed:[]};
+  $("#sCur").innerHTML=CURRENCIES.map(([c,n])=>`<option value="${c}"${c===draft.currency?" selected":""}>${n} (${curSymbol(c)})</option>`).join("");
+  $("#sCur").onchange=()=>{draft.currency=$("#sCur").value};
+  $("#sName").value=draft.name;$("#sErr").textContent="";$("#newMember").value="";
+  showPage(true);drawDraft();drawAccess();loadCounts();
+}
+async function loadCounts(){
+  counts={};
+  if(mode==="local"){local.purchases.forEach(p=>counts[p.payer]=(counts[p.payer]||0)+1);drawDraft();return}
+  for(const m of config.members){
+    try{const s=await db.collection("purchases").where("payer","==",m.id).limit(1000).get();counts[m.id]=s.docs.length}catch(e){}
+  }
+  if(settingsOpen())drawDraft();
+}
+function drawDraft(){
+  $("#sLogo").innerHTML=logoHTML(draft.logo,draft.name);
+  $("#logoRemove").hidden=!draft.logo;
+  $("#sMembers").innerHTML=draft.members.length?draft.members.map((m,i)=>`<div class="mem"><i class="dot" style="background:${colorAt(i)}"></i><input class="input" data-i="${i}" value="${esc(m.name)}" maxlength="24" aria-label="Member name"><span class="cnt">${counts[m.id]!=null?counts[m.id]:""}</span><button class="rm" data-rm="${i}" aria-label="Remove ${esc(m.name)}">×</button></div>`).join("")
+    :`<div class="zero">No members yet. Add everyone who shares the mess cost.</div>`;
+  document.querySelectorAll("#sMembers input").forEach(inp=>inp.oninput=()=>{draft.members[+inp.dataset.i].name=inp.value});
+  document.querySelectorAll("#sMembers [data-rm]").forEach(b=>b.onclick=()=>armConfirm(b,"Remove?",()=>{
+    const m=draft.members[+b.dataset.rm];draft.removed.push(m.id);draft.members.splice(+b.dataset.rm,1);drawDraft();
+  }));
+}
+function drawAccess(){
+  const box=$("#accessSec");
+  if(mode!=="shared"||!me.isOwner){box.innerHTML="";return}
+  const ids=Object.keys(people).filter(id=>id!==me.id);
+  let h=`<div class="slabel">Permissions</div><div class="scard">`;
+  h+=`<div class="help">Only you, the owner, can give permissions. <b>View</b> sees everything. <b>Can add</b> adds purchases and edits their own. <b>Admin</b> also edits all entries and members.<ol><li>Use <b>Share</b> on this page and invite your roommate by email with edit access.</li><li>They log in and open the link once.</li><li>They appear below. Pick which member they are and choose their permission.</li></ol></div>`;
+  if(!ids.length)h+=`<div class="zero">Nobody has opened the ledger yet.</div>`;
+  else h+=ids.map(id=>{
+    const pr=profiles[id]||{};const m=member(linkOf(id));const role=roleOf(id);
+    return `<div class="person" style="flex-wrap:wrap">${pr.avatarUrl?`<img src="${esc(pr.avatarUrl)}" alt="">`:`<div class="av" style="background:${m?colorOf(m):"#888"}">${esc(initials(pr.name||(m?m.name:"?")))}</div>`}
+      <div class="t"><b>${esc(pr.name||"Someone")}</b>
+        <select class="input" data-link="${id}" aria-label="Which member" style="padding:6px 8px;font-size:13px;margin-top:4px;width:auto;max-width:100%">
+          <option value="">Not linked to a member</option>${config.members.map(x=>`<option value="${x.id}"${m&&m.id===x.id?" selected":""}>${esc(x.name)}</option>`).join("")}
+        </select></div>
+      <div class="seg" role="group" aria-label="Permission"><button data-role="view" data-u="${id}" aria-pressed="${role==="view"}">View</button><button data-role="add" data-u="${id}" aria-pressed="${role==="add"}">Can add</button><button data-role="admin" data-u="${id}" aria-pressed="${role==="admin"}">Admin</button></div></div>`;
+  }).join("");
+  box.innerHTML=h+`</div>`;
+  box.querySelectorAll("[data-role]").forEach(b=>b.onclick=async()=>{
+    const id=b.dataset.u,role=b.dataset.role;
+    const ed=new Set(roles.editors),ad=new Set(roles.admins);ed.delete(id);ad.delete(id);
+    if(role==="add")ed.add(id);if(role==="admin")ad.add(id);
+    if(await writeRoles({editors:[...ed],admins:[...ad],links:{...(roles.links||{})}})){drawAccess();toast(role==="admin"?"Made admin":role==="add"?"Can add purchases now":"Changed to view only")}
+  });
+  box.querySelectorAll("[data-link]").forEach(sel=>sel.onchange=async()=>{
+    const links={...(roles.links||{})};if(sel.value)links[sel.dataset.link]=sel.value;else delete links[sel.dataset.link];
+    if(await writeRoles({editors:[...roles.editors],admins:[...roles.admins],links}))toast("Member linked");else drawAccess();
+  });
+}
+$("#backBtn").onclick=()=>showPage(false);
+$("#addMember").onclick=()=>{const v=$("#newMember").value.trim();if(!v)return;draft.members.push({id:uid(),name:v});$("#newMember").value="";drawDraft();$("#newMember").focus()};
+$("#newMember").addEventListener("keydown",e=>{if(e.key==="Enter")$("#addMember").click()});
+$("#sName").oninput=()=>{draft.name=$("#sName").value;if(!draft.logo)$("#sLogo").innerHTML=logoHTML("",draft.name)};
+$("#logoRemove").onclick=()=>{draft.logo="";drawDraft()};
+$("#logoFile").onchange=e=>{
+  const f=e.target.files[0];if(!f)return;
+  const img=new Image();const url=URL.createObjectURL(f);
+  img.onload=()=>{const S=160,c=document.createElement("canvas");c.width=c.height=S;const x=c.getContext("2d");x.fillStyle="#fff";x.fillRect(0,0,S,S);const s=Math.min(img.width,img.height);
+    x.drawImage(img,(img.width-s)/2,(img.height-s)/2,s,s,0,0,S,S);draft.logo=c.toDataURL("image/jpeg",.9);URL.revokeObjectURL(url);drawDraft()};
+  img.onerror=()=>{$("#sErr").textContent="That file could not be read as an image."};
+  img.src=url;e.target.value="";
+};
+$("#saveSettings").onclick=async()=>{
+  const names=draft.members.map(m=>m.name.trim());
+  if(names.some(n=>!n)){$("#sErr").textContent="Every member needs a name.";return}
+  const lower=names.map(n=>n.toLowerCase());
+  if(new Set(lower).size!==lower.length){$("#sErr").textContent="Two members have the same name.";return}
+  draft.members=draft.members.map(m=>({id:m.id,name:m.name.trim()}));
+  const btn=$("#saveSettings");btn.disabled=true;btn.textContent="Saving…";
+  const ok=await writeConfig({name:(draft.name||"").trim()||"Mess Ledger",logo:draft.logo,members:draft.members,currency:draft.currency||"SAR"});
+  if(ok&&draft.removed.length)await removePurchasesOf(draft.removed);
+  btn.disabled=false;btn.textContent="Save names";
+  if(ok){showPage(false);toast("Saved")}
+};
+
+async function removePurchasesOf(ids){
+  if(mode==="local"){local.purchases=local.purchases.filter(p=>!ids.includes(p.payer));saveLocal();useLocal();render();return}
+  for(const id of ids){
+    try{const snap=await db.collection("purchases").where("payer","==",id).limit(1000).get();
+      for(const d of snap.docs){await db.collection("purchases").doc(d.id).delete()}}catch(e){}
+  }
+}
+
+/* ---------- nav ---------- */
+function shift(n){view.m+=n;if(view.m<0){view.m=11;view.y--}if(view.m>11){view.m=0;view.y++}if(mode==="shared")subscribeMonth();render()}
+$("#prevM").onclick=()=>shift(-1);
+$("#nextM").onclick=()=>shift(1);
+document.querySelectorAll("[data-tab]").forEach(b=>b.onclick=()=>{view.tab=b.dataset.tab;render()});
+$("#openSettings").onclick=openSettings;
+$("#fab").onclick=()=>openPurchase(null);
+
+/* ---------- downloads ---------- */
+function fileBase(){return (config.name||"mess").replace(/[^\w]+/g,"-").toLowerCase()+"-"+mk(view.y,view.m)}
+async function save(filename,data){
+  if(downloads){
+    try{await downloads.save({filename,data});return}
+    catch(e){if(e&&e.code==="declined")return;if(e&&e.code==="rate_limited"){toast("Please try again in a moment");return}}
+  }
+  try{const blob=data instanceof Blob?data:new Blob([data],{type:"text/csv"});
+    const a=document.createElement("a");a.href=URL.createObjectURL(blob);a.download=filename;document.body.appendChild(a);a.click();a.remove();}
+  catch(e){toast("Download isn't available here")}
+}
+function dlCSV(){
+  const D=monthData();const q=s=>'"'+String(s).replace(/"/g,'""')+'"';
+  const f2=n=>r2(n).toFixed(2);
+  const rows=[["Date","Item","Paid by","Amount ("+cur()+")"]];
+  [...D.list].sort((a,b)=>a.date.localeCompare(b.date)).forEach(p=>rows.push([p.date,p.item,(member(p.payer)||{}).name||"",f2(p.amount)]));
+  rows.push([],["Total","","",f2(D.total)],["Per head","","",f2(D.share)],[],["Member","Paid","Share","Balance"]);
+  D.bal.forEach(b=>rows.push([b.m.name,f2(b.paid),f2(D.share),f2(b.bal)]));
+  rows.push([],["From","To","Amount"]);D.tx.forEach(t=>rows.push([t.from.name,t.to.name,f2(t.amt)]));
+  save(fileBase()+".csv","\uFEFF"+rows.map(r=>r.map(q).join(",")).join("\r\n"));
+}
+function dlPDF(){
+  if(!window.jspdf){toast("PDF tool didn't load. Try CSV.");return}
+  const D=monthData();const doc=new window.jspdf.jsPDF({unit:"pt",format:"a4"});
+  const W=doc.internal.pageSize.getWidth();let y=56;const L=48,R=W-48;
+  const month=new Date(view.y,view.m,1).toLocaleString("en-IN",{month:"long",year:"numeric"});
+  const line=()=>{doc.setDrawColor(210);doc.line(L,y,R,y);y+=16};
+  const check=()=>{if(y>780){doc.addPage();y=56}};
+  if(config.logo){try{doc.addImage(config.logo,"PNG",L,y-24,40,40)}catch(e){}}
+  const x0=config.logo?L+52:L;
+  doc.setFont("helvetica","bold");doc.setFontSize(20);doc.text(config.name||"Mess Ledger",x0,y);
+  doc.setFont("helvetica","normal");doc.setFontSize(11);doc.setTextColor(100);doc.text("Monthly report, "+month,x0,y+16);doc.setTextColor(0);y+=46;
+  doc.setFontSize(12);doc.text("Total spent: "+fmtPlain(D.total),L,y);doc.text("Per head: "+fmtPlain(D.share),L+200,y);doc.text("Purchases: "+D.list.length,L+360,y);y+=22;line();
+  doc.setFont("helvetica","bold");doc.text("Settle up",L,y);y+=18;doc.setFont("helvetica","normal");
+  if(!D.tx.length){doc.text("Everyone is even.",L,y);y+=18}
+  D.tx.forEach(t=>{doc.text(`${t.from.name} pays ${t.to.name}`,L,y);doc.text(fmtPlain(t.amt),R,y,{align:"right"});y+=18});
+  y+=6;line();
+  doc.setFont("helvetica","bold");doc.text("Member balances",L,y);y+=18;
+  doc.setFontSize(10);doc.setTextColor(110);doc.text("Member",L,y);doc.text("Paid",L+240,y,{align:"right"});doc.text("Share",L+340,y,{align:"right"});doc.text("Balance",R,y,{align:"right"});y+=16;
+  doc.setTextColor(0);doc.setFont("helvetica","normal");doc.setFontSize(11);
+  D.bal.forEach(b=>{doc.text(b.m.name,L,y);doc.text(fmtPlain(b.paid),L+240,y,{align:"right"});doc.text(fmtPlain(D.share),L+340,y,{align:"right"});
+    const v=r2(b.bal);doc.text((v>0?"+":v<0?"-":"")+fmtPlain(Math.abs(v)),R,y,{align:"right"});y+=18});
+  y+=6;line();
+  doc.setFont("helvetica","bold");doc.setFontSize(12);doc.text("Purchases",L,y);y+=18;
+  doc.setFontSize(10);doc.setTextColor(110);doc.text("Date",L,y);doc.text("Item",L+80,y);doc.text("Paid by",L+300,y);doc.text("Amount",R,y,{align:"right"});y+=16;
+  doc.setTextColor(0);doc.setFont("helvetica","normal");doc.setFontSize(11);
+  [...D.list].sort((a,b)=>a.date.localeCompare(b.date)).forEach(p=>{check();
+    doc.text(p.date.split("-").reverse().join("/"),L,y);doc.text(doc.splitTextToSize(p.item,210)[0],L+80,y);doc.text((member(p.payer)||{}).name||"-",L+300,y);doc.text(fmtPlain(p.amount),R,y,{align:"right"});y+=18});
+  save(fileBase()+".pdf",doc.output("blob"));
+}
+
+/* ---------- shared storage ---------- */
+function subscribeMonth(){
+  if(unsubMonth){try{unsubMonth()}catch(e){}unsubMonth=null}
+  const start=mk(view.y,view.m)+"-01";
+  const ny=view.m===11?view.y+1:view.y, nm=view.m===11?0:view.m+1;
+  const end=mk(ny,nm)+"-01";
+  const q=db.collection("purchases").where("date",">=",start).where("date","<",end).limit(1000);
+  unsubMonth=q.onSnapshot(snap=>{
+    purchases=snap.docs.map(d=>({id:d.id,...d.data()}));render();resolveProfiles();
+  },e=>syncMsg("Live updates paused. Reload the page to reconnect."));
+}
+async function resolveProfiles(){
+  const ids=[...new Set([...Object.keys(people),...purchases.map(p=>p.addedBy).filter(Boolean)])];
+  if(!user||!ids.length)return;
+  try{const ps=await user.profiles(ids);for(const id in ps)profiles[id]={name:ps[id].name||"",avatarUrl:ps[id].avatarUrl||""};render();if(settingsOpen())drawAccess()}catch(e){}
+}
+async function migrateIfNeeded(){
+  // bring over data from the earlier version (single document) or this browser
+  try{
+    const cfg=await db.doc("mess/config").get();
+    if(cfg.exists)return;
+    let src=null;
+    const old=await db.doc("mess/ledger").get();
+    if(old.exists){const d=old.data();if(d&&Array.isArray(d.members))src=d}
+    if(!src&&(local.members.length||local.purchases.length))src=local;
+    if(!src)return;
+    await db.doc("mess/config").set({name:src.name||"Mess Ledger",logo:src.logo||"",members:src.members||[]});
+    for(const p of (src.purchases||[])){const {id,...body}=p;await db.collection("purchases").doc(id||uid()).set({...body,addedBy:me.id||null})}
+    toast("Your earlier entries were moved over");
+  }catch(e){}
+}
+
+async function connect(){
+  if(!(window.claude&&window.claude.use))return;
+  mode="loading";render();
+  window.claude.use("downloads").then(d=>{downloads=d}).catch(()=>{});
+  try{
+    db=await window.claude.use("db");
+    if(!db){mode="gate";render();return}
+    user=await window.claude.use("user").catch(()=>null);
+    if(user){
+      try{const v=await user.me();me.id=v.id;me.isOwner=!!v.isOwner;me.name=v.name||"";me.avatarUrl=v.avatarUrl||""}catch(e){me.isOwner=false}
+      if(!me.id){mode="gate";render();return}
+      try{const c=await user.can("data.write");me.canWrite=c!==false}catch(e){}
+    }else{me.isOwner=false}
+    mode="shared";
+    config={name:"Mess Ledger",logo:"",members:[],currency:"SAR"};purchases=[];
+    render();syncMsg("Synced for everyone with access");
+    if(me.isOwner)await migrateIfNeeded();
+    db.doc("mess/config").onSnapshot(s=>{if(s.exists){const d=s.data();config={name:d.name||"Mess Ledger",logo:d.logo||"",members:Array.isArray(d.members)?d.members:[],currency:d.currency||"SAR"};render()}},()=>{});
+    db.doc("mess/roles").onSnapshot(s=>{const r=s.exists?s.data():{};roles={editors:Array.isArray(r.editors)?r.editors:[],admins:Array.isArray(r.admins)?r.admins:[],links:(r.links&&typeof r.links==="object")?r.links:{}};render();if(settingsOpen()){if(!canManage())showPage(false);else drawAccess()}},()=>{});
+    let registered=false;
+    db.collection("people").limit(200).onSnapshot(s=>{people={};s.docs.forEach(d=>people[d.id]=d.data());
+      if(!registered&&!me.isOwner&&me.canWrite&&me.id&&!people[me.id]){registered=true;db.doc("people/"+me.id).set({seenAt:Date.now()}).catch(()=>{})}render();resolveProfiles();if(settingsOpen())drawAccess()},()=>{});
+    subscribeMonth();
+  }catch(e){mode="gate";render()}
+}
+
+loadLocal();useLocal();render();connect();
+})();
+
+
+</script>
+</body>
+</html>
