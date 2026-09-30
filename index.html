@@ -398,7 +398,6 @@ auth.onAuthStateChanged(async u=>{
     S.screen="onboard";S.ob="choose";render();return;
   }
   if(S.profile.current&&await isMemberOf(S.profile.current))return openMess(S.profile.current);
-  if(S.profile.pending){S.screen="onboard";watchPending();render();return}
   // fall back to any mess they belong to
   for(const id of (S.profile.messIds||[])){if(id!==S.profile.current&&await isMemberOf(id))return openMess(id)}
   S.screen="onboard";S.ob="choose";render();
@@ -420,7 +419,7 @@ function stopAll(){unsub.forEach(f=>{try{f()}catch(e){}});unsub=[];
 function openMess(id){
   stopAll();
   S.messId=id;S.mess=null;S.people={};S.requests=[];S.purchases=[];S.inSettings=false;S.screen="app";
-  userRef(S.user.uid).set({current:id,messIds:FV.arrayUnion(id),pending:FV.delete()},{merge:true}).catch(()=>{});
+  userRef(S.user.uid).set({current:id,messIds:FV.arrayUnion(id)},{merge:true}).catch(()=>{});
   S.profile.current=id;
   unsub.push(messRef(id).onSnapshot(s=>{
     if(!s.exists){leftMess("This mess no longer exists.");return}
@@ -429,8 +428,6 @@ function openMess(id){
   unsub.push(peopleCol(id).onSnapshot(s=>{
     S.people={};s.docs.forEach(d=>S.people[d.id]=d.data());
     if(!S.people[S.user.uid]){leftMess(leaving?"You left the mess.":"You were removed from this mess.");leaving=false;return}
-    if(isHead()&&!unsubReq){unsubReq=reqCol(id).orderBy("at").onSnapshot(r=>{S.requests=r.docs.map(d=>({id:d.id,...d.data()}));refresh()},()=>{})}
-    if(!isHead()&&unsubReq){unsubReq();unsubReq=null;S.requests=[]}
     refresh();
   },()=>{}));
   subscribeMonth();
@@ -531,14 +528,6 @@ function onboardHTML(){
   const nm=esc(dispName());
   const top=`<div class="brand"><div class="logo">ML</div><div><div class="display" style="font-size:22px;font-weight:600">Mess Ledger</div>
     <div class="label" style="letter-spacing:.12em">Signed in as ${esc(dispName())}</div></div></div>`;
-  const pend=S.profile.pending;
-  if(pend){
-    return `<div class="center">${top}<div class="card"><div class="label">Request sent</div>
-      <div style="font-size:20px;font-weight:600;margin:6px 0 8px">Waiting for the head of ${esc(pend.name)} to approve you</div>
-      <p style="color:var(--muted);margin:0 0 16px">You'll get in automatically once they approve. You can keep this page open.</p>
-      <button class="btn" id="cancelReq" style="width:100%">Cancel request</button></div>
-      <button class="linkbtn" id="signOut">Sign out</button></div>`;
-  }
   let h=`<div class="center">${top}`;
   if(S.ob==="choose"){
     if(S.invite){
@@ -547,7 +536,7 @@ function onboardHTML(){
         <p style="color:var(--muted);margin:0">${S.invite.headName?"Mess head: "+esc(S.invite.headName):""}</p></div>`;
     }
     h+=`<div class="label" style="margin:22px 4px 12px">How will you use Mess Ledger?</div>
-      <button class="choice" data-ob="member"><span class="ic">👤</span><span><b>Mess member</b><small>${S.invite?"Join "+esc(S.invite.name)+" as a member":"Find your mess and join it"}</small></span></button>
+      <button class="choice" data-ob="member"><span class="ic">👤</span><span><b>Mess member</b><small>${S.invite?"Join "+esc(S.invite.name)+" as a member":"Join with your mess head's invite link"}</small></span></button>
       <button class="choice" data-ob="head"><span class="ic">👑</span><span><b>Mess head</b><small>Start a new mess and invite your members</small></span></button>`;
     if(S.profile.messIds&&S.profile.messIds.length)h+=`<button class="linkbtn" id="backToMess">Back to my mess</button>`;
   }
@@ -555,20 +544,18 @@ function onboardHTML(){
     if(S.invite){
       h+=`<div class="card"><div class="label">Join as a member</div>
         <div style="font-size:20px;font-weight:600;margin:6px 0 14px">${esc(S.invite.name)}</div>
-        <label class="field"><span class="label">Your name in this mess</span><input class="input" id="obName" value="${nm}" maxlength="24"></label>
+        <p style="color:var(--muted);margin:0 0 16px">You'll join as <b style="color:var(--ink)">${nm}</b>.</p>
         <button class="btn primary" id="joinInvite" style="width:100%">Join mess</button></div>`;
     }else{
-      h+=`<div class="card"><div class="label">Find your mess</div>
-        <input class="input" id="obSearch" placeholder="Search mess name…" autocomplete="off" style="margin-top:4px">
-        <div id="obResults" style="margin-top:12px"><div class="zero">Type at least 2 letters of your mess name.</div></div>
-        <p class="zero" style="margin:14px 0 0;font-size:13px">Got an invite link from your mess head? Just open it to join straight away.</p></div>`;
+      h+=`<div class="card" style="text-align:center;padding:28px 20px"><div style="font-size:34px">🔗</div>
+        <div style="font-size:20px;font-weight:600;margin:8px 0 6px">Open your invite link</div>
+        <p style="color:var(--muted);margin:0">Ask your mess head to send you the mess invite link. Open it and you'll join their mess straight away.</p></div>`;
     }
     h+=`<button class="linkbtn" data-ob="choose">← Back</button>`;
   }
   if(S.ob==="head"){
     h+=`<div class="card"><div class="label">Start a new mess</div>
       <label class="field" style="margin-top:8px"><span class="label">Mess name</span><input class="input" id="hmName" placeholder="e.g. ASR Mess, Room 12" maxlength="40"></label>
-      <label class="field"><span class="label">Your name</span><input class="input" id="hmYou" value="${nm}" maxlength="24"></label>
       <label class="field"><span class="label">Currency</span><select class="input" id="hmCur">${CURRENCIES.map(([c,n])=>`<option value="${c}">${n} (${curSymbol(c)})</option>`).join("")}</select></label>
       <div class="err" id="hmErr"></div>
       <button class="btn primary" id="createMess" style="width:100%">Create mess</button></div>
@@ -581,14 +568,12 @@ function bindOnboard(){
   document.querySelectorAll("[data-ob]").forEach(b=>b.onclick=()=>{S.ob=b.dataset.ob;render()});
   const so=$("#signOut");if(so)so.onclick=()=>auth.signOut();
   const back=$("#backToMess");if(back)back.onclick=async()=>{for(const id of S.profile.messIds){if(await isMemberOf(id))return openMess(id)}toast("You're not in any mess yet")};
-  const cr=$("#cancelReq");if(cr)cr.onclick=cancelRequest;
   const ji=$("#joinInvite");if(ji)ji.onclick=joinViaInvite;
   const cm=$("#createMess");if(cm)cm.onclick=createMess;
-  const se=$("#obSearch");if(se){let t;se.oninput=()=>{clearTimeout(t);t=setTimeout(()=>runSearch(se.value),300)};se.focus()}
 }
 
 async function joinViaInvite(){
-  const btn=$("#joinInvite");const name=($("#obName").value||"").trim()||dispName()||"Member";
+  const btn=$("#joinInvite");const name=dispName()||"Member";
   const {messId,code,role}=S.invite;
   btn.disabled=true;btn.textContent="Joining…";
   try{
@@ -597,7 +582,7 @@ async function joinViaInvite(){
   }catch(e){btn.disabled=false;btn.textContent="Join mess";toast(e.code==="permission-denied"?"This invite link is no longer valid. Ask the mess head for a new one.":failMsg(e))}
 }
 async function createMess(){
-  const name=$("#hmName").value.trim(), you=$("#hmYou").value.trim()||dispName()||"Mess head", currency=$("#hmCur").value;
+  const name=$("#hmName").value.trim(), you=dispName()||"Mess head", currency=$("#hmCur").value;
   if(!name){$("#hmErr").textContent="Give your mess a name.";return}
   const btn=$("#createMess");btn.disabled=true;btn.textContent="Creating…";
   const id=fs.collection("messes").doc().id, code=genCode(), uid=S.user.uid, now=Date.now();
@@ -610,66 +595,21 @@ async function createMess(){
   catch(e){btn.disabled=false;btn.textContent="Create mess";$("#hmErr").textContent=failMsg(e)}
 }
 
-/* search bar */
-async function runSearch(q){
-  const box=$("#obResults");if(!box)return;
-  q=q.trim().toLowerCase();
-  if(q.length<2){box.innerHTML=`<div class="zero">Type at least 2 letters of your mess name.</div>`;return}
-  box.innerHTML=`<div class="zero">Searching…</div>`;
-  try{
-    const s=await fs.collection("directory").orderBy("nameLower").startAt(q).endAt(q+"\uf8ff").limit(15).get();
-    if(!s.docs.length){box.innerHTML=`<div class="zero">No mess found with that name.</div>`;return}
-    box.innerHTML=s.docs.map(d=>{const x=d.data();const mine=(S.profile.messIds||[]).includes(d.id);
-      return `<div class="result"><div class="av" style="background:${colorAt(x.name.length)}">${esc(initials(x.name))}</div>
-        <div class="t"><b>${esc(x.name)}</b><span>Head: ${esc(x.headName||"—")}</span></div>
-        ${mine?`<button class="btn" data-open="${d.id}">Open</button>`:`<button class="btn primary sm" data-req="${d.id}" data-name="${esc(x.name)}">Request to join</button>`}</div>`}).join("");
-    box.querySelectorAll("[data-req]").forEach(b=>b.onclick=()=>requestJoin(b.dataset.req,b.dataset.name,b));
-    box.querySelectorAll("[data-open]").forEach(b=>b.onclick=async()=>{if(await isMemberOf(b.dataset.open))openMess(b.dataset.open);else b.outerHTML=`<button class="btn primary sm" disabled>Removed</button>`});
-  }catch(e){box.innerHTML=`<div class="zero">${esc(failMsg(e))}</div>`}
-}
-async function requestJoin(messId,name,btn){
-  btn.disabled=true;btn.textContent="Sending…";
-  try{
-    await reqCol(messId).doc(S.user.uid).set({name:dispName()||"Someone",avatarUrl:S.user.photoURL||"",at:Date.now()});
-    await userRef(S.user.uid).set({pending:{messId,name}},{merge:true});
-    S.profile.pending={messId,name};watchPending();render();
-  }catch(e){btn.disabled=false;btn.textContent="Request to join";toast(failMsg(e))}
-}
-function watchPending(){
-  if(unsubPending){unsubPending();unsubPending=null}
-  const p=S.profile.pending;if(!p)return;
-  unsubPending=reqCol(p.messId).doc(S.user.uid).onSnapshot(async s=>{
-    if(s.exists)return;
-    unsubPending();unsubPending=null;
-    if(await isMemberOf(p.messId)){toast("You've been approved!");openMess(p.messId)}
-    else{toast("Your request to join "+p.name+" was declined.");S.profile.pending=null;userRef(S.user.uid).set({pending:FV.delete()},{merge:true}).catch(()=>{});render()}
-  },()=>{});
-}
-async function cancelRequest(){
-  const p=S.profile.pending;if(!p)return;
-  if(unsubPending){unsubPending();unsubPending=null}
-  try{await reqCol(p.messId).doc(S.user.uid).delete()}catch(e){}
-  await userRef(S.user.uid).set({pending:FV.delete()},{merge:true}).catch(()=>{});
-  S.profile.pending=null;S.ob="choose";render();
-}
-
 /* ---------- main ledger ---------- */
 function logoHTML(logo,name){return logo?`<img src="${logo}" alt="Mess logo">`:esc(initials(name))}
 function mainHTML(){
   const M=S.mess||{name:"…"};const ms=members();const D=monthData();const n=ms.length;
   const {y,m,tab}=S.view;
   const my=me()||{};
-  const reqDot=isHead()&&S.requests.length?`<i class="reqdot">${S.requests.length}</i>`:"";
   let h=`<header class="top">
     <div class="logo">${logoHTML(M.logo,M.name)}</div>
-    <div class="title"><h1>${esc(M.name)}</h1><p>${esc(ms.map(x=>x.name).join(" · "))}</p>
+    <div class="title"><h1>${esc(M.name)}</h1>
       <span class="badge${canAdd()?"":" view"}">${esc(my.name||"")} · ${ROLE_LABEL[role()]||""}</span></div>
-    <button class="gear" id="openSettings" aria-label="Settings">⚙${reqDot}</button>
+    <button class="gear" id="openSettings" aria-label="Settings">⚙</button>
     <div class="monthpill"><button id="prevM" aria-label="Previous month">&lt;</button><div class="m">${new Date(y,m,1).toLocaleString("en-US",{month:"long"})} ${y}</div><button id="nextM" aria-label="Next month">&gt;</button></div>
   </header>
   <div class="tabs" role="tablist"><button role="tab" aria-selected="${tab==="ledger"}" data-tab="ledger">Ledger</button><button role="tab" aria-selected="${tab==="report"}" data-tab="report">Month report</button></div>
   <main class="stack">`;
-  if(isHead()&&S.requests.length)h+=`<button class="card reqbanner" id="goReq"><span><b>${S.requests.length} join request${S.requests.length>1?"s":""}</b><small>Tap to approve or decline</small></span><span>›</span></button>`;
   h+=`<div class="card hero"><div class="label" style="margin:0">Total spent · ${MON[m]}</div><div class="big">${fmt(D.total)}</div>
     <div class="sub">${n?`Split across ${n} member${n>1?"s":""} · ${fmt(D.share)} each`:"No members yet"}</div></div>`;
   if(tab==="ledger"){
@@ -691,7 +631,7 @@ function mainHTML(){
       h+=`<div>${block}</div>`;
     }
   }else{
-    h+=`<div class="dl"><button class="btn" id="dlCsv">↓ Download CSV</button><button class="btn" id="dlPdf">↓ Download PDF</button></div>`;
+    h+=`<button class="btn" id="dlPdf" style="width:100%">↓ Download PDF</button>`;
     h+=`<div class="card"><div class="label">Who owes whom</div>`+(D.tx.length?D.tx.map(t=>`<div class="owe"><div class="av" style="background:${t.from.color}">${esc((t.from.name[0]||"?").toUpperCase())}</div><div class="t">${esc(t.from.name)} pays <em>${esc(t.to.name)}</em></div><div class="v">${fmt(t.amt)}</div></div>`).join(""):`<div class="zero" style="padding:4px 0">${D.total?"Everyone is settled up.":"Nothing to settle yet."}</div>`)+`</div>`;
     if(n)h+=`<div class="card" style="padding-bottom:10px"><div class="label" style="margin-bottom:4px">Member balances · ${new Date(y,m,1).toLocaleString("en-US",{month:"long"})} ${y}</div>`+D.bal.map(b=>{
       const cls=b.balC>=0.5?"pos":b.balC<=-0.5?"neg":"zero";
@@ -703,12 +643,11 @@ function mainHTML(){
 }
 function bindMain(){
   $("#openSettings").onclick=()=>{S.inSettings=true;window.scrollTo(0,0);render()};
-  const gr=$("#goReq");if(gr)gr.onclick=()=>{S.inSettings=true;render();setTimeout(()=>{const r=$("#setRequests");if(r)r.scrollIntoView({behavior:"smooth"})},50)};
   $("#prevM").onclick=()=>shift(-1);$("#nextM").onclick=()=>shift(1);
   document.querySelectorAll("[data-tab]").forEach(b=>b.onclick=()=>{S.view.tab=b.dataset.tab;render()});
   document.querySelectorAll("[data-edit]").forEach(b=>b.onclick=()=>openPurchase(b.dataset.edit));
   document.querySelectorAll("[data-del]").forEach(b=>b.onclick=()=>armConfirm(b,"Delete?",async()=>{try{await purCol(S.messId).doc(b.dataset.del).delete();toast("Purchase deleted")}catch(e){toast(failMsg(e))}}));
-  const c=$("#dlCsv");if(c)c.onclick=dlCSV;const p=$("#dlPdf");if(p)p.onclick=dlPDF;
+  const p=$("#dlPdf");if(p)p.onclick=dlPDF;
 }
 function shift(n){const v=S.view;v.m+=n;if(v.m<0){v.m=11;v.y--}if(v.m>11){v.m=0;v.y++}subscribeMonth();render()}
 
@@ -766,8 +705,7 @@ function settingsHTML(){
   const M=S.mess||{};
   draftLogo=M.logo||"";
   let h=`<div class="shead"><button class="back" id="backBtn" aria-label="Back">←</button><h2>Settings</h2></div>`;
-  if(isHead())h+=`<div class="slabel">Invite members</div><div class="scard" id="setInvite"></div>
-    <div id="setRequests"></div>`;
+  if(isHead())h+=`<div class="slabel">Invite members</div><div class="scard" id="setInvite"></div>`;
   if(isAdmin()){
     h+=`<div class="slabel">Mess logo</div><div class="scard"><div class="logo-row"><div class="logo" id="sLogo"></div>
         <label class="pillbtn">Upload logo<input type="file" accept="image/*" id="logoFile" hidden></label>
@@ -806,7 +744,6 @@ function drawSettingsLive(){
   if(!S.inSettings)return;
   if(S.setKey!==role()+"|"+!!S.mess){render();return}               // role or mess loaded after the page was built
   if(isHead()&&$("#setInvite"))drawInvite();
-  if(isHead()&&$("#setRequests"))drawRequests();
   const box=$("#setMembers");if(box&&!box.contains(document.activeElement))drawMembers();
   drawAccount();
 }
@@ -820,22 +757,6 @@ function drawInvite(){
   $("#invWa").href="https://wa.me/?text="+encodeURIComponent("Join our mess \""+M.name+"\" on Mess Ledger: "+url);
   $("#invCopy").onclick=()=>{(navigator.clipboard?navigator.clipboard.writeText(url):Promise.reject()).then(()=>toast("Link copied"),()=>window.prompt("Copy this link",url))};
 }
-function drawRequests(){
-  const box=$("#setRequests");
-  if(!S.requests.length){box.innerHTML="";return}
-  box.innerHTML=`<div class="slabel">Join requests</div><div class="scard">`+S.requests.map(r=>`<div class="person">
-    ${r.avatarUrl?`<img src="${esc(r.avatarUrl)}" alt="">`:`<div class="av" style="background:#888">${esc(initials(r.name))}</div>`}
-    <div class="t"><b>${esc(r.name)}</b><span>wants to join</span></div>
-    <button class="btn sm" data-no="${r.id}">Decline</button><button class="btn primary sm" data-yes="${r.id}">Approve</button></div>`).join("")+`</div>`;
-  box.querySelectorAll("[data-yes]").forEach(b=>b.onclick=async()=>{
-    const r=S.requests.find(x=>x.id===b.dataset.yes);if(!r)return;b.disabled=true;
-    const bt=fs.batch();
-    bt.set(peopleCol(S.messId).doc(r.id),{name:r.name,role:"editor",memberId:r.id,joinedAt:Date.now(),via:"request"});
-    bt.delete(reqCol(S.messId).doc(r.id));
-    try{await bt.commit();toast(r.name+" joined the mess")}catch(e){b.disabled=false;toast(failMsg(e))}
-  });
-  box.querySelectorAll("[data-no]").forEach(b=>b.onclick=async()=>{try{await reqCol(S.messId).doc(b.dataset.no).delete();toast("Request declined")}catch(e){toast(failMsg(e))}});
-}
 function drawMembers(){
   const box=$("#setMembers");const ms=members();const head=isHead(),admin=isAdmin();
   box.innerHTML=ms.length?ms.map(m=>{
@@ -846,7 +767,7 @@ function drawMembers(){
       if(head)acts+=`<button class="mbtn${r==="admin"?" on":""}" data-adm="${m.uid}">${r==="admin"?"Remove admin":"Make admin"}</button>`;
       if(head||(admin&&r!=="admin"))acts+=`<button class="mbtn danger" data-rm="${m.id}">Remove</button>`;
     }
-    const nameEl=self?`<input class="input" id="myName" value="${esc(m.name)}" maxlength="24" aria-label="Your name">`:`<div class="mname">${esc(m.name)}</div>`;
+    const nameEl=`<div class="mname">${esc(m.name)}</div>`;
     return `<div class="mem"><i class="dot" style="background:${m.color}"></i><div class="mcol">${nameEl}${tag?`<div>${tag}${self?`<span class="rtag"> · you</span>`:""}</div>`:(self?`<div><span class="rtag">You</span></div>`:"")}</div>${acts?`<div class="macts">${acts}</div>`:""}</div>`;
   }).join(""):`<div class="zero">No members yet. Share your invite link.</div>`;
   box.querySelectorAll("[data-adm]").forEach(b=>b.onclick=async()=>{
@@ -854,10 +775,6 @@ function drawMembers(){
     try{await peopleCol(S.messId).doc(id).update({role:next});toast(next==="admin"?S.people[id].name+" is now an admin":"Admin removed")}catch(e){b.disabled=false;toast(failMsg(e))}
   });
   box.querySelectorAll("[data-rm]").forEach(b=>b.onclick=()=>armConfirm(b,"Sure?",()=>removeMember(b.dataset.rm)));
-  const myName=$("#myName");if(myName){
-    myName.onchange=async()=>{const v=myName.value.trim();if(!v)return;try{await peopleCol(S.messId).doc(S.user.uid).update({name:v});if(isHead())fs.collection("directory").doc(S.messId).update({headName:v}).catch(()=>{});toast("Name updated")}catch(e){toast(failMsg(e))}};
-    myName.addEventListener("blur",()=>setTimeout(()=>{if(!box.contains(document.activeElement))drawMembers()},200));
-  }
 }
 async function removeMember(id){
   const m=members().find(x=>x.id===id);if(!m)return;
@@ -895,15 +812,6 @@ function save(filename,data){
   try{const blob=data instanceof Blob?data:new Blob([data],{type:"text/csv"});
     const a=document.createElement("a");a.href=URL.createObjectURL(blob);a.download=filename;document.body.appendChild(a);a.click();a.remove();}
   catch(e){toast("Download isn't available here")}
-}
-function dlCSV(){
-  const D=monthData();const q=s=>'"'+String(s).replace(/"/g,'""')+'"';const f2=n=>r2(n).toFixed(2);
-  const rows=[["Date","Item","Paid by","Amount ("+cur()+")"]];
-  [...D.list].sort((a,b)=>a.date.localeCompare(b.date)).forEach(p=>rows.push([p.date,p.item,(member(p.payer)||{}).name||"",f2(p.amount)]));
-  rows.push([],["Total","","",f2(D.total)],["Per head","","",f2(D.share)],[],["Member","Paid","Share","Balance"]);
-  D.bal.forEach(b=>rows.push([b.m.name,f2(b.paid),f2(D.share),f2(b.bal)]));
-  rows.push([],["From","To","Amount"]);D.tx.forEach(t=>rows.push([t.from.name,t.to.name,f2(t.amt)]));
-  save(fileBase()+".csv","\uFEFF"+rows.map(r=>r.map(q).join(",")).join("\r\n"));
 }
 function dlPDF(){
   if(!window.jspdf){toast("PDF tool didn't load. Try CSV.");return}

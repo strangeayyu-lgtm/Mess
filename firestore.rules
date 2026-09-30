@@ -20,10 +20,11 @@ service cloud.firestore {
       allow write: if signedIn() && uidNow() == uid;
     }
 
-    // ---------- public mess directory (for the search bar) ----------
-    // Only name + head name are public. Nothing else about the mess.
+    // ---------- mess name + head name (shown on the invite screen) ----------
+    // Can only be opened by id (from an invite link). Nobody can list or search messes.
     match /directory/{messId} {
-      allow read: if signedIn();
+      allow get: if signedIn();
+      allow list: if false;
       allow create: if signedIn()
         && getAfter(messPath(messId)).data.headUid == uidNow()
         && request.resource.data.headUid == uidNow();
@@ -84,13 +85,6 @@ service cloud.firestore {
         allow delete: if (isHead(messId) && uid != uidNow())
           || (isAdmin(messId) && uid != uidNow() && resource.data.role in ['editor', 'viewer'])
           || (uid == uidNow() && resource.data.role != 'head');
-      }
-
-      // ----- join requests from the search bar: go ONLY to the head -----
-      match /requests/{uid} {
-        allow read: if (signedIn() && uid == uidNow()) || isHead(messId);
-        allow create: if signedIn() && uid == uidNow() && !isMember(messId);
-        allow delete: if (signedIn() && uid == uidNow()) || isHead(messId);
       }
 
       // ----- purchases -----
