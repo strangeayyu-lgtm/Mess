@@ -20,6 +20,16 @@ service cloud.firestore {
       allow write: if signedIn() && uidNow() == uid;
     }
 
+    // ---------- one account per name ----------
+    // names/{lower-case name} -> who owns it. Anyone can check if a name is free.
+    match /names/{key} {
+      allow get: if true;
+      allow list: if false;
+      allow create: if signedIn() && request.resource.data.uid == uidNow();
+      allow update: if false;
+      allow delete: if signedIn() && resource.data.uid == uidNow();
+    }
+
     // ---------- mess name + head name (shown on the invite screen) ----------
     // Can only be opened by id (from an invite link). Nobody can list or search messes.
     match /directory/{messId} {
@@ -42,7 +52,9 @@ service cloud.firestore {
         && request.resource.data.createdBy == uidNow()
         && request.resource.data.role == 'editor'
         && getAfter(personPath(request.resource.data.messId, uidNow())).data.role == 'head';
-      allow delete: if false;   // each mess head has one permanent link
+      // each mess head has one permanent link; it goes only when the head deletes the mess
+      allow delete: if signedIn() && resource.data.createdBy == uidNow()
+        && !exists(messPath(resource.data.messId));
     }
 
     // ---------- a mess ----------
@@ -83,6 +95,7 @@ service cloud.firestore {
 
         // The head removes anyone; admins remove normal members; anyone except the head can leave.
         allow delete: if (isHead(messId) && uid != uidNow())
+          || (uid == uidNow() && resource.data.role == 'head' && !exists(messPath(messId)))   // head, after deleting the mess
           || (isAdmin(messId) && uid != uidNow() && resource.data.role in ['editor', 'viewer'])
           || (uid == uidNow() && resource.data.role != 'head');
       }

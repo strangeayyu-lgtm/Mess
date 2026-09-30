@@ -252,6 +252,11 @@ select.input{appearance:auto}
 .person .btn.sm+.btn.sm{margin-left:0}
 
 [hidden]{display:none!important}
+.delbox{border:1px solid var(--neg);border-radius:14px;padding:14px;margin-top:4px}
+.delbox b{color:var(--neg)}
+.delbox p{color:var(--muted);font-size:14px;margin:6px 0 10px}
+.delgo{background:var(--neg);color:#fff;border-color:transparent}
+.delgo:disabled{opacity:.4}
 .pw{position:relative}
 .pw .input{padding-right:70px}
 .pwtoggle{position:absolute;right:8px;top:50%;transform:translateY(-50%);border:0;background:transparent;color:var(--accent);font-size:13px;font-weight:600;padding:6px}
@@ -314,7 +319,9 @@ function armConfirm(btn,label,action){
 const USER_DOMAIN="users.messledger.app";
 const toEmail=id=>{id=id.trim().toLowerCase();return id.includes("@")?id:id+"@"+USER_DOMAIN};
 const loginIdOf=u=>{const e=(u&&u.email)||"";return e.endsWith("@"+USER_DOMAIN)?e.slice(0,-(USER_DOMAIN.length+1)):e};
-let pendingName="";
+let pendingName="", registering=false, authMsg="";
+/* one account per name: names/{key} is claimed at registration */
+const nameKey=n=>n.trim().replace(/\s+/g," ").toLowerCase().replace(/[\/]/g,"_").replace(/^\.+$/,"_");
 const dispName=()=>(S.user&&(S.user.displayName||pendingName||loginIdOf(S.user)))||"";
 const inviteUrl=code=>location.origin+location.pathname+"?join="+code;
 
@@ -385,7 +392,8 @@ function monthData(){
 }
 
 /* ============ boot ============ */
-auth.onAuthStateChanged(async u=>{
+auth.onAuthStateChanged(u=>{if(!registering)boot(u)});
+async function boot(u){
   stopAll();S.user=u;
   if(!u){S.screen="login";render();return}
   S.screen="loading";render();
@@ -401,7 +409,7 @@ auth.onAuthStateChanged(async u=>{
   // fall back to any mess they belong to
   for(const id of (S.profile.messIds||[])){if(id!==S.profile.current&&await isMemberOf(id))return openMess(id)}
   S.screen="onboard";S.ob="choose";render();
-});
+}
 async function isMemberOf(id){try{const d=await peopleCol(id).doc(S.user.uid).get();return d.exists}catch(e){return false}}
 async function loadInvite(code){
   try{
@@ -454,7 +462,7 @@ function render(){
   const app=$("#app");
   $("#fab").hidden=true;
   if(S.screen==="loading"){app.innerHTML=`<div class="center"><div class="card empty">Loading…</div></div>`;return}
-  if(S.screen==="login"){app.innerHTML=loginHTML();bindLogin();return}
+  if(S.screen==="login"){if(authMsg)authTab="register";app.innerHTML=loginHTML();bindLogin();return}
   if(S.screen==="onboard"){app.innerHTML=onboardHTML();bindOnboard();return}
   if(S.inSettings){S.setKey=role()+"|"+!!S.mess;app.innerHTML=settingsHTML();bindSettings();drawSettingsLive();return}
   app.innerHTML=mainHTML();bindMain();
@@ -494,6 +502,7 @@ function bindLogin(){
   document.querySelectorAll("[data-auth]").forEach(b=>b.onclick=()=>{authTab=b.dataset.auth;render()});
   $("#pwToggle").onclick=()=>{const i=$("#aPw"),show=i.type==="password";i.type=show?"text":"password";const j=$("#aPw2");if(j)j.type=i.type;$("#pwToggle").textContent=show?"Hide":"Show"};
   const go=$("#authGo"),err=$("#aErr");
+  if(authMsg){err.textContent=authMsg;authMsg=""}
   document.querySelectorAll("#app input").forEach(i=>i.addEventListener("keydown",e=>{if(e.key==="Enter")go.click()}));
   go.onclick=async()=>{
     err.textContent="";
@@ -507,14 +516,27 @@ function bindLogin(){
       if(!name){err.textContent="Enter your name.";return}
       if(pw.length<6){err.textContent="Password must be at least 6 characters.";return}
       if(pw!==$("#aPw2").value){err.textContent="The two passwords don't match.";return}
-      pendingName=name;
+      if(name.length<2){err.textContent="Name is too short.";return}
+      pendingName=name.replace(/\s+/g," ");
+      try{const t=await fs.collection("names").doc(nameKey(name)).get();if(t.exists){err.textContent="Someone already registered with the name \""+name+"\". Add your surname or initial.";return}}catch(e){}
     }
     go.disabled=true;go.textContent=reg?"Creating account…":"Logging in…";
     try{
-      if(reg){const c=await auth.createUserWithEmailAndPassword(toEmail(id),pw);await c.user.updateProfile({displayName:pendingName});
-        if(S.user&&S.user.uid===c.user.uid){await userRef(c.user.uid).set({name:pendingName},{merge:true}).catch(()=>{});render()}}
+      if(reg){
+        registering=true;
+        const c=await auth.createUserWithEmailAndPassword(toEmail(id),pw);
+        try{await fs.collection("names").doc(nameKey(pendingName)).set({uid:c.user.uid,name:pendingName,at:Date.now()})}
+        catch(e){                                   // name was taken a moment ago: undo the account
+          authMsg="Someone already registered with the name \""+pendingName+"\". Add your surname or initial.";
+          try{await c.user.delete()}catch(x){}
+          registering=false;await auth.signOut().catch(()=>{});boot(null);return;
+        }
+        await c.user.updateProfile({displayName:pendingName});
+        await userRef(c.user.uid).set({name:pendingName,nameKey:nameKey(pendingName)},{merge:true}).catch(()=>{});
+        registering=false;boot(auth.currentUser);
+      }
       else await auth.signInWithEmailAndPassword(toEmail(id),pw);
-    }catch(e){go.disabled=false;go.textContent=reg?"Create account":"Log in";err.textContent=authError(e)}
+    }catch(e){registering=false;go.disabled=false;go.textContent=reg?"Create account":"Log in";err.textContent=authError(e)}
   };
   const fp=$("#forgotPw");if(fp)fp.onclick=async()=>{
     const id=$("#aId").value.trim();
@@ -793,10 +815,17 @@ async function drawAccount(){
     <div id="otherMesses"></div>
     <div style="display:grid;gap:8px;margin-top:12px">
       <button class="btn" id="newOrJoin">Start or join another mess</button>
-      ${isHead()?"":`<button class="btn danger" id="leaveMess">Leave this mess</button>`}
+      ${isHead()?`<button class="btn danger" id="delMessBtn">Delete this mess</button><div id="delBox" hidden class="delbox"><b>Delete ${esc(S.mess?S.mess.name:"")} forever?</b><p>All purchases, members and the invite link will be deleted. This can't be undone.</p><input class="input" id="delConfirm" placeholder="Type the mess name to confirm" autocomplete="off"><div style="display:flex;gap:8px;margin-top:10px"><button class="btn" id="delCancel" style="flex:1">Cancel</button><button class="btn delgo" id="delGo" style="flex:1" disabled>Delete forever</button></div></div>`:`<button class="btn danger" id="leaveMess">Leave this mess</button>`}
       <button class="btn" id="signOutBtn">Sign out</button></div>`;
   $("#newOrJoin").onclick=()=>{stopAll();S.screen="onboard";S.ob="choose";render()};
   $("#signOutBtn").onclick=()=>auth.signOut();
+  const db=$("#delMessBtn");if(db){
+    const box=$("#delBox"),inp=$("#delConfirm"),go=$("#delGo");
+    db.onclick=()=>{box.hidden=false;db.hidden=true;inp.focus()};
+    $("#delCancel").onclick=()=>{box.hidden=true;db.hidden=false;inp.value="";go.disabled=true};
+    inp.oninput=()=>{go.disabled=inp.value.trim().toLowerCase()!==(S.mess.name||"").trim().toLowerCase()};
+    go.onclick=deleteMess;
+  }
   const lv=$("#leaveMess");if(lv)lv.onclick=()=>armConfirm(lv,"Tap again to leave",async()=>{leaving=true;try{await peopleCol(S.messId).doc(S.user.uid).delete()}catch(e){leaving=false;toast(failMsg(e))}});
   if(ids.length){
     const rows=await Promise.all(ids.map(async id=>{try{const d=await fs.collection("directory").doc(id).get();return d.exists?{id,name:d.data().name}:null}catch(e){return null}}));
@@ -804,6 +833,29 @@ async function drawAccount(){
     om.innerHTML=rows.filter(Boolean).map(r=>`<div class="person"><div class="av" style="background:${colorAt(r.name.length)}">${esc(initials(r.name))}</div><div class="t"><b>${esc(r.name)}</b><span>Your other mess</span></div><button class="btn sm" data-sw="${r.id}">Open</button></div>`).join("");
     om.querySelectorAll("[data-sw]").forEach(b=>b.onclick=async()=>{if(await isMemberOf(b.dataset.sw))openMess(b.dataset.sw);else{toast("You're no longer in that mess");userRef(S.user.uid).set({messIds:FV.arrayRemove(b.dataset.sw)},{merge:true});S.profile.messIds=S.profile.messIds.filter(x=>x!==b.dataset.sw);drawAccount()}});
   }
+}
+
+async function deleteMess(){
+  const go=$("#delGo");go.disabled=true;go.textContent="Deleting…";
+  const id=S.messId,code=S.mess.inviteCode,uid=S.user.uid;
+  const others=Object.keys(S.people).filter(u=>u!==uid);
+  stopAll();                                             // stop listening before removing everything
+  try{
+    // 1. purchases (in batches of 400)
+    for(;;){const snap=await purCol(id).limit(400).get();if(!snap.docs.length)break;
+      const b=fs.batch();snap.docs.forEach(d=>b.delete(d.ref));await b.commit();}
+    // 2. the mess, its public name and its invite link
+    await messRef(id).delete();
+    await fs.collection("directory").doc(id).delete().catch(()=>{});
+    if(code)await fs.collection("invites").doc(code).delete().catch(()=>{});
+    // 3. members, then the head
+    for(const u of others)await peopleCol(id).doc(u).delete().catch(()=>{});
+    await peopleCol(id).doc(uid).delete().catch(()=>{});
+    await userRef(uid).set({current:FV.delete(),messIds:FV.arrayRemove(id)},{merge:true}).catch(()=>{});
+    S.profile.current=null;S.profile.messIds=(S.profile.messIds||[]).filter(x=>x!==id);
+    S.messId=null;S.mess=null;S.people={};S.purchases=[];S.inSettings=false;
+    S.screen="onboard";S.ob="choose";render();toast("Mess deleted");
+  }catch(e){toast(failMsg(e));openMess(id)}
 }
 
 /* ---------- downloads ---------- */
