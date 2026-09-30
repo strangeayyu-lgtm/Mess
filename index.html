@@ -252,6 +252,9 @@ select.input{appearance:auto}
 .person .btn.sm+.btn.sm{margin-left:0}
 
 [hidden]{display:none!important}
+.pw{position:relative}
+.pw .input{padding-right:70px}
+.pwtoggle{position:absolute;right:8px;top:50%;transform:translateY(-50%);border:0;background:transparent;color:var(--accent);font-size:13px;font-weight:600;padding:6px}
 </style>
 </head>
 <body>
@@ -307,6 +310,12 @@ function armConfirm(btn,label,action){
   btn.dataset.armed="1";const old=btn.innerHTML;btn.innerHTML=label;btn.classList.add("sure");
   setTimeout(()=>{if(btn.isConnected){delete btn.dataset.armed;btn.innerHTML=old;btn.classList.remove("sure")}},3000);
 }
+/* username login: "rishad" is stored in Firebase as rishad@users.messledger.app */
+const USER_DOMAIN="users.messledger.app";
+const toEmail=id=>{id=id.trim().toLowerCase();return id.includes("@")?id:id+"@"+USER_DOMAIN};
+const loginIdOf=u=>{const e=(u&&u.email)||"";return e.endsWith("@"+USER_DOMAIN)?e.slice(0,-(USER_DOMAIN.length+1)):e};
+let pendingName="";
+const dispName=()=>(S.user&&(S.user.displayName||pendingName||loginIdOf(S.user)))||"";
 const inviteUrl=code=>location.origin+location.pathname+"?join="+code;
 
 /* ============ Firebase ============ */
@@ -376,12 +385,11 @@ function monthData(){
 }
 
 /* ============ boot ============ */
-auth.getRedirectResult().catch(e=>toast("Sign-in failed: "+(e.message||e.code)));
 auth.onAuthStateChanged(async u=>{
   stopAll();S.user=u;
   if(!u){S.screen="login";render();return}
   S.screen="loading";render();
-  try{await userRef(u.uid).set({name:u.displayName||"",avatarUrl:u.photoURL||"",updatedAt:Date.now()},{merge:true})}catch(e){}
+  try{await userRef(u.uid).set({name:u.displayName||pendingName||loginIdOf(u),avatarUrl:u.photoURL||"",updatedAt:Date.now()},{merge:true})}catch(e){}
   try{const d=await userRef(u.uid).get();S.profile=d.exists?d.data():{}}catch(e){S.profile={}}
 
   if(joinCode&&await loadInvite(joinCode)){
@@ -457,32 +465,72 @@ function render(){
 }
 
 /* ---------- login ---------- */
+let authTab="login";
 function loginHTML(){
-  const inv=joinCode?`<p style="color:var(--accent);margin:0 0 14px">You've been invited to join a mess. Sign in to continue.</p>`:"";
+  const inv=joinCode?`<p style="color:var(--accent);margin:0 0 14px">You've been invited to join a mess. ${authTab==="login"?"Log in":"Create an account"} to continue.</p>`:"";
+  const reg=authTab==="register";
   return `<div class="center"><div class="brand"><div class="logo">ML</div><div class="display" style="font-size:24px;font-weight:600">Mess Ledger</div></div>
-  <div class="card" style="text-align:center;padding:30px 22px">
-    <div class="label" style="margin-bottom:10px">Sign in</div>
-    <div style="font-size:21px;font-weight:600;margin-bottom:8px">Split mess costs with your roommates</div>
-    ${inv}<p style="color:var(--muted);margin:0 0 20px">Use your Google account to sign in.</p>
-    <button class="btn primary" id="googleLogin" style="width:100%">Sign in with Google</button></div></div>`;
+  <div class="tabs" role="tablist"><button role="tab" aria-selected="${!reg}" data-auth="login">Log in</button><button role="tab" aria-selected="${reg}" data-auth="register">Register</button></div>
+  <div class="card" style="padding:24px 20px">
+    ${inv}
+    ${reg?`<label class="field"><span class="label">Your name</span><input class="input" id="aName" maxlength="24" autocomplete="name" placeholder="e.g. Rishad"></label>`:""}
+    <label class="field"><span class="label">Login ID</span><input class="input" id="aId" maxlength="60" autocomplete="username" autocapitalize="none" spellcheck="false" placeholder="${reg?"Choose a login ID (or your email)":"Login ID or email"}"></label>
+    <label class="field"><span class="label">Password</span><div class="pw"><input class="input" id="aPw" type="password" autocomplete="${reg?"new-password":"current-password"}" placeholder="${reg?"At least 6 characters":"Password"}"><button type="button" class="pwtoggle" id="pwToggle">Show</button></div></label>
+    ${reg?`<label class="field"><span class="label">Confirm password</span><input class="input" id="aPw2" type="password" autocomplete="new-password"></label>`:""}
+    <div class="err" id="aErr"></div>
+    <button class="btn primary" id="authGo" style="width:100%">${reg?"Create account":"Log in"}</button>
+    ${reg?`<p class="zero" style="font-size:13px;margin:12px 0 0">Remember your login ID and password. If you register with an email, you can reset a forgotten password.</p>`:`<button class="linkbtn" id="forgotPw">Forgot password?</button>`}
+  </div></div>`;
+}
+function authError(e){
+  const c=e&&e.code;
+  if(["auth/invalid-credential","auth/wrong-password","auth/user-not-found","auth/invalid-login-credentials"].includes(c))return "Wrong login ID or password.";
+  if(c==="auth/email-already-in-use")return "That login ID is already taken. Try another.";
+  if(c==="auth/weak-password")return "Password must be at least 6 characters.";
+  if(c==="auth/invalid-email")return "That login ID isn't valid. Use letters, numbers, dot or underscore.";
+  if(c==="auth/too-many-requests")return "Too many tries. Wait a few minutes and try again.";
+  if(c==="auth/operation-not-allowed")return "Email/Password sign-in is not enabled in Firebase yet.";
+  if(c==="auth/network-request-failed")return "You're offline. Check your connection.";
+  return "Something went wrong ("+(c||"error")+").";
 }
 function bindLogin(){
-  $("#googleLogin").onclick=async()=>{
-    const p=new firebase.auth.GoogleAuthProvider();
-    try{await auth.signInWithPopup(p)}
-    catch(e){
-      if(e&&(e.code==="auth/popup-blocked"||e.code==="auth/operation-not-supported-in-this-environment"))return auth.signInWithRedirect(p);
-      if(e&&(e.code==="auth/popup-closed-by-user"||e.code==="auth/cancelled-popup-request"))return;
-      toast("Sign-in failed: "+(e.message||e.code));
+  document.querySelectorAll("[data-auth]").forEach(b=>b.onclick=()=>{authTab=b.dataset.auth;render()});
+  $("#pwToggle").onclick=()=>{const i=$("#aPw"),show=i.type==="password";i.type=show?"text":"password";const j=$("#aPw2");if(j)j.type=i.type;$("#pwToggle").textContent=show?"Hide":"Show"};
+  const go=$("#authGo"),err=$("#aErr");
+  document.querySelectorAll("#app input").forEach(i=>i.addEventListener("keydown",e=>{if(e.key==="Enter")go.click()}));
+  go.onclick=async()=>{
+    err.textContent="";
+    const id=$("#aId").value.trim(),pw=$("#aPw").value;
+    if(!id){err.textContent="Enter your login ID.";return}
+    if(!id.includes("@")&&!/^[a-zA-Z0-9._]{3,30}$/.test(id)){err.textContent="Login ID: 3 to 30 letters, numbers, dot or underscore. No spaces.";return}
+    if(!pw){err.textContent="Enter your password.";return}
+    const reg=authTab==="register";
+    if(reg){
+      const name=$("#aName").value.trim();
+      if(!name){err.textContent="Enter your name.";return}
+      if(pw.length<6){err.textContent="Password must be at least 6 characters.";return}
+      if(pw!==$("#aPw2").value){err.textContent="The two passwords don't match.";return}
+      pendingName=name;
     }
+    go.disabled=true;go.textContent=reg?"Creating account…":"Logging in…";
+    try{
+      if(reg){const c=await auth.createUserWithEmailAndPassword(toEmail(id),pw);await c.user.updateProfile({displayName:pendingName});
+        if(S.user&&S.user.uid===c.user.uid){await userRef(c.user.uid).set({name:pendingName},{merge:true}).catch(()=>{});render()}}
+      else await auth.signInWithEmailAndPassword(toEmail(id),pw);
+    }catch(e){go.disabled=false;go.textContent=reg?"Create account":"Log in";err.textContent=authError(e)}
+  };
+  const fp=$("#forgotPw");if(fp)fp.onclick=async()=>{
+    const id=$("#aId").value.trim();
+    if(!id.includes("@")){err.textContent="Password reset works only for accounts registered with an email. Type that email above, or ask your mess head to help you make a new account.";return}
+    try{await auth.sendPasswordResetEmail(id);toast("Reset link sent to "+id)}catch(e){err.textContent=authError(e)}
   };
 }
 
 /* ---------- onboarding: mess member / mess head ---------- */
 function onboardHTML(){
-  const nm=esc(S.user.displayName||"");
+  const nm=esc(dispName());
   const top=`<div class="brand"><div class="logo">ML</div><div><div class="display" style="font-size:22px;font-weight:600">Mess Ledger</div>
-    <div class="label" style="letter-spacing:.12em">Signed in as ${esc(S.user.displayName||S.user.email||"")}</div></div></div>`;
+    <div class="label" style="letter-spacing:.12em">Signed in as ${esc(dispName())}</div></div></div>`;
   const pend=S.profile.pending;
   if(pend){
     return `<div class="center">${top}<div class="card"><div class="label">Request sent</div>
@@ -540,7 +588,7 @@ function bindOnboard(){
 }
 
 async function joinViaInvite(){
-  const btn=$("#joinInvite");const name=($("#obName").value||"").trim()||S.user.displayName||"Member";
+  const btn=$("#joinInvite");const name=($("#obName").value||"").trim()||dispName()||"Member";
   const {messId,code,role}=S.invite;
   btn.disabled=true;btn.textContent="Joining…";
   try{
@@ -549,7 +597,7 @@ async function joinViaInvite(){
   }catch(e){btn.disabled=false;btn.textContent="Join mess";toast(e.code==="permission-denied"?"This invite link is no longer valid. Ask the mess head for a new one.":failMsg(e))}
 }
 async function createMess(){
-  const name=$("#hmName").value.trim(), you=$("#hmYou").value.trim()||S.user.displayName||"Mess head", currency=$("#hmCur").value;
+  const name=$("#hmName").value.trim(), you=$("#hmYou").value.trim()||dispName()||"Mess head", currency=$("#hmCur").value;
   if(!name){$("#hmErr").textContent="Give your mess a name.";return}
   const btn=$("#createMess");btn.disabled=true;btn.textContent="Creating…";
   const id=fs.collection("messes").doc().id, code=genCode(), uid=S.user.uid, now=Date.now();
@@ -582,7 +630,7 @@ async function runSearch(q){
 async function requestJoin(messId,name,btn){
   btn.disabled=true;btn.textContent="Sending…";
   try{
-    await reqCol(messId).doc(S.user.uid).set({name:S.user.displayName||S.user.email||"Someone",avatarUrl:S.user.photoURL||"",at:Date.now()});
+    await reqCol(messId).doc(S.user.uid).set({name:dispName()||"Someone",avatarUrl:S.user.photoURL||"",at:Date.now()});
     await userRef(S.user.uid).set({pending:{messId,name}},{merge:true});
     S.profile.pending={messId,name};watchPending();render();
   }catch(e){btn.disabled=false;btn.textContent="Request to join";toast(failMsg(e))}
@@ -824,7 +872,7 @@ async function removeMember(id){
 async function drawAccount(){
   const box=$("#setAccount");if(!box)return;
   const ids=(S.profile.messIds||[]).filter(x=>x!==S.messId);
-  box.innerHTML=`<div class="person"><img src="${esc(S.user.photoURL||"")}" alt="" onerror="this.style.display='none'"><div class="t"><b>${esc(S.user.displayName||"")}</b><span>${esc(S.user.email||"")}</span></div></div>
+  box.innerHTML=`<div class="person">${S.user.photoURL?`<img src="${esc(S.user.photoURL)}" alt="">`:`<div class="av" style="background:var(--accent)">${esc(initials(dispName()))}</div>`}<div class="t"><b>${esc(dispName())}</b><span>Login ID: ${esc(loginIdOf(S.user))}</span></div></div>
     <div id="otherMesses"></div>
     <div style="display:grid;gap:8px;margin-top:12px">
       <button class="btn" id="newOrJoin">Start or join another mess</button>
