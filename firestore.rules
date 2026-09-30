@@ -31,7 +31,8 @@ service cloud.firestore {
     // First person to sign in claims ownership; it can never be changed afterwards
     match /mess/owner {
       allow create: if signedIn() && request.resource.data.uid == request.auth.uid;
-      allow update, delete: if false;
+      allow update: if isOwner() && request.resource.data.uid is string;  // owner can hand over ownership
+      allow delete: if false;
     }
     // Members list / name / currency: owner and admins
     match /mess/config {

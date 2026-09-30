@@ -488,7 +488,16 @@ function roleBadge(){
   const av=me.avatarUrl?`<img src="${esc(me.avatarUrl)}" alt="" style="width:16px;height:16px;border-radius:50%;vertical-align:-3px;margin-right:6px">`:"";
   return `<span class="badge${canAdd()?"":" view"}" title="Signed in with Google">${av}${esc(nm)} · ${role}</span>`;
 }
-function joinCard(){return ""}
+function joinCard(){
+  if(mode!=="shared"||me.isOwner||joined()||!me.id)return "";
+  const w=(people[me.id]||{}).want;
+  if(w)return `<div class="card"><div class="label">Request sent</div><div style="font-size:18px;font-weight:600;margin-top:6px">Waiting for the owner to approve you${w==="head"?" as mess head":""}.</div></div>`;
+  const taken=Object.values(roles.links||{}),free=config.members.filter(m=>!taken.includes(m.id));
+  return `<div class="card"><div class="label">Join this mess</div><div style="font-size:20px;font-weight:600;margin:6px 0 12px">Who are you?</div>
+  <select class="input" id="jName"><option value="">${free.length?"Select your name":"Ask the owner to add your name"}</option>${free.map(m=>`<option value="${m.id}">${esc(m.name)}</option>`).join("")}</select>
+  <button class="btn primary" data-join="member" style="width:100%;margin-top:10px">I'm a mess member</button>
+  <button class="btn" data-join="head" style="width:100%;margin-top:8px">I run the mess (mess head)</button></div>`;
+}
 const MON=["Jan","Feb","Mar","Apr","May","June","July","Aug","Sept","Oct","Nov","Dec"];
 const settingsOpen=()=>!$("#settingsPage").hidden;
 function gateHTML(){
@@ -647,8 +656,17 @@ $("#pDelete").onclick=e=>{
 $("#pAmt").addEventListener("keydown",e=>{if(e.key==="Enter")$("#pSave").click()});
 
 /* ---------- join ---------- */
-async function joinAs(memberId){
-  try{await db.doc("people/"+me.id).set({memberId,joinedAt:Date.now()});people[me.id]={memberId};render();toast("Done. The owner can now give you access.")}
+async function joinAs(kind){
+  const sel=$("#jName"),memberId=sel?sel.value:"";
+  if(kind==="member"&&!memberId){toast("Select your name first");return}
+  try{await db.doc("people/"+me.id).set({memberId:memberId||null,want:kind,joinedAt:Date.now()},{merge:true});people[me.id]={...people[me.id],memberId,want:kind};render();toast("Request sent. Waiting for the owner.")}
+  catch(e){toast(failMsg(e))}
+}
+async function makeOwner(id){
+  if(!confirm("Make this person the owner? You will become an admin."))return;
+  const ad=new Set(roles.admins);ad.add(me.id);ad.delete(id);const ed=new Set(roles.editors);ed.delete(id);
+  if(!await writeRoles({editors:[...ed],admins:[...ad],links:{...(roles.links||{})}}))return;
+  try{await db.doc("mess/owner").set({uid:id,claimedAt:Date.now()});toast("Ownership transferred");setTimeout(()=>location.reload(),1200)}
   catch(e){toast(failMsg(e))}
 }
 
@@ -689,18 +707,25 @@ function drawAccess(){
   if(mode!=="shared"||!me.isOwner){box.innerHTML="";return}
   const ids=Object.keys(people).filter(id=>id!==me.id);
   let h=`<div class="slabel">Permissions</div><div class="scard">`;
-  h+=`<div class="help">Only you, the owner, can give permissions. <b>View</b> sees everything. <b>Can add</b> adds purchases and edits their own. <b>Admin</b> also edits all entries and members.<ol><li>Use <b>Share</b> on this page and invite your roommate by email with edit access.</li><li>They log in and open the link once.</li><li>They appear below. Pick which member they are and choose their permission.</li></ol></div>`;
+  h+=`<div class="help">Only you, the owner, can give permissions. <b>View</b> sees everything. <b>Can add</b> adds purchases and edits their own. <b>Admin</b> also edits all entries and members.</div><div style="padding:0 14px 14px"><b>Invite roommates</b><div class="help">Send this link. They sign in with Google, then choose <b>Mess member</b> or <b>Mess head</b>. You approve them below.</div><div style="display:flex;gap:8px"><button class="btn" id="invCopy">Copy link</button><a class="btn primary" id="invWa" target="_blank" rel="noopener">WhatsApp</a></div></div>`;
   if(!ids.length)h+=`<div class="zero">Nobody has opened the ledger yet.</div>`;
   else h+=ids.map(id=>{
-    const pr=profiles[id]||{};const m=member(linkOf(id));const role=roleOf(id);
+    const pr=profiles[id]||{};const m=member(linkOf(id));const role=roleOf(id);const p=people[id]||{},pm=member(p.memberId);
+    const rq=p.want==="head"?`<div class="help" style="margin:4px 0">Says they run the mess <button class="btn primary" data-head="${id}" style="padding:4px 10px;font-size:12px">Make owner</button></div>`:(p.want==="member"&&!linkOf(id)&&pm)?`<div class="help" style="margin:4px 0">Wants to join as <b>${esc(pm.name)}</b> <button class="btn primary" data-ok="${id}" style="padding:4px 10px;font-size:12px">Approve</button></div>`:"";
     return `<div class="person" style="flex-wrap:wrap">${pr.avatarUrl?`<img src="${esc(pr.avatarUrl)}" alt="">`:`<div class="av" style="background:${m?colorOf(m):"#888"}">${esc(initials(pr.name||(m?m.name:"?")))}</div>`}
-      <div class="t"><b>${esc(pr.name||"Someone")}</b>
+      <div class="t"><b>${esc(pr.name||"Someone")}</b>${rq}
         <select class="input" data-link="${id}" aria-label="Which member" style="padding:6px 8px;font-size:13px;margin-top:4px;width:auto;max-width:100%">
           <option value="">Not linked to a member</option>${config.members.map(x=>`<option value="${x.id}"${m&&m.id===x.id?" selected":""}>${esc(x.name)}</option>`).join("")}
         </select></div>
       <div class="seg" role="group" aria-label="Permission"><button data-role="view" data-u="${id}" aria-pressed="${role==="view"}">View</button><button data-role="add" data-u="${id}" aria-pressed="${role==="add"}">Can add</button><button data-role="admin" data-u="${id}" aria-pressed="${role==="admin"}">Admin</button></div></div>`;
   }).join("");
   box.innerHTML=h+`</div>`;
+  const url=location.origin+location.pathname;
+  $("#invWa").href="https://wa.me/?text="+encodeURIComponent("Join our mess ledger: "+url);
+  $("#invCopy").onclick=()=>{(navigator.clipboard?navigator.clipboard.writeText(url):Promise.reject()).then(()=>toast("Link copied"),()=>prompt("Copy this link",url))};
+  box.querySelectorAll("[data-head]").forEach(b=>b.onclick=()=>makeOwner(b.dataset.head));
+  box.querySelectorAll("[data-ok]").forEach(b=>b.onclick=async()=>{const id=b.dataset.ok,ed=new Set(roles.editors);ed.add(id);
+    if(await writeRoles({editors:[...ed],admins:[...roles.admins],links:{...(roles.links||{}),[id]:people[id].memberId}})){drawAccess();toast("Approved as member")}});
   box.querySelectorAll("[data-role]").forEach(b=>b.onclick=async()=>{
     const id=b.dataset.u,role=b.dataset.role;
     const ed=new Set(roles.editors),ad=new Set(roles.admins);ed.delete(id);ad.delete(id);
