@@ -24,86 +24,8 @@ window.MESS_FIREBASE_CONFIG = {
   appId: "1:360463374396:web:641ca6d8a8ad32c4608b39"
 };
 </script>
-<script>
-/* Adapter: gives the app the same window.claude.use("db"|"user"|"downloads")
-   interface it was written for, backed by Firebase Auth + Firestore. */
-(function(){
-  const cfg = window.MESS_FIREBASE_CONFIG || {};
-  if (!window.firebase || !cfg.apiKey || /^PASTE/.test(cfg.apiKey)) return; // local-only mode
-  firebase.initializeApp(cfg);
-  const auth = firebase.auth(), fs = firebase.firestore();
-  const empty = { name: "", avatarUrl: "" };
-
-  const authReady = new Promise(res => {
-    const off = auth.onAuthStateChanged(u => { off(); res(u); });
-  });
-
-  let boot = null, isOwner = false, viewer = null;
-  async function init(u) {
-    viewer = u;
-    // Profile so other members can see your name/photo
-    try {
-      await fs.doc("profiles/" + u.uid).set({ name: u.displayName || "", avatarUrl: u.photoURL || "", updatedAt: Date.now() }, { merge: true });
-    } catch (e) {}
-    // The first person to sign in becomes the owner (rules allow this claim only once)
-    try {
-      let o = await fs.doc("mess/owner").get();
-      if (!o.exists) {
-        try { await fs.doc("mess/owner").set({ uid: u.uid, claimedAt: Date.now() }); } catch (e) {}
-        o = await fs.doc("mess/owner").get();
-      }
-      isOwner = !!(o.exists && o.data().uid === u.uid);
-    } catch (e) { isOwner = false; }
-  }
-
-  const userApi = {
-    async me() {
-      return { id: viewer.uid, isOwner, name: viewer.displayName || "", avatarUrl: viewer.photoURL || "" };
-    },
-    async can() { return true; },
-    async profiles(ids) {
-      const out = {};
-      await Promise.all((ids || []).map(async id => {
-        try {
-          const s = await fs.doc("profiles/" + id).get();
-          out[id] = s.exists ? { name: s.data().name || "", avatarUrl: s.data().avatarUrl || "" } : empty;
-        } catch (e) { out[id] = empty; }
-      }));
-      return out;
-    }
-  };
-
-  window.messSignIn = async function () {
-    const provider = new firebase.auth.GoogleAuthProvider();
-    try { await auth.signInWithPopup(provider); }
-    catch (e) {
-      if (e && (e.code === "auth/popup-blocked" || e.code === "auth/operation-not-supported-in-this-environment")) {
-        await auth.signInWithRedirect(provider); return;
-      }
-      if (e && (e.code === "auth/popup-closed-by-user" || e.code === "auth/cancelled-popup-request")) return;
-      alert("Sign-in failed: " + (e && e.message ? e.message : e));
-      return;
-    }
-    location.reload();
-  };
-  window.messSignOut = async function () { await auth.signOut(); location.reload(); };
-
-  window.claude = {
-    async use(name) {
-      if (name === "db") {
-        const u = await authReady;
-        if (!u) return null;                       // not signed in -> app shows the login gate
-        if (!boot) boot = init(u);
-        await boot;
-        return fs;
-      }
-      if (name === "user") { await authReady; return viewer ? userApi : null; }
-      throw Object.assign(new Error("not available"), { code: "not_available" }); // downloads: app falls back to normal browser download
-    }
-  };
-})();
-</script>
 <style>
+
 :root{
   --bg:#EEF1F6;
   --glow-a:rgba(40,170,160,.22); --glow-b:rgba(120,100,220,.18); --glow-c:rgba(200,90,130,.12);
@@ -289,69 +211,53 @@ select.input{appearance:auto}
 
 .toast{position:fixed;left:50%;top:calc(16px + env(safe-area-inset-top,0px));transform:translateX(-50%);background:var(--ink);color:var(--bg);padding:10px 16px;border-radius:12px;font-weight:500;font-size:14px;z-index:60;opacity:0;pointer-events:none;transition:opacity .2s;max-width:90vw;text-align:center}
 .toast.show{opacity:1}
+
+.center{max-width:485px;margin:0 auto}
+.brand{display:flex;align-items:center;gap:12px;margin:10px 0 24px}
+.choice{display:flex;align-items:center;gap:16px;width:100%;text-align:left;background:var(--card);border:1px solid var(--line);border-radius:18px;padding:18px;margin-bottom:12px;-webkit-backdrop-filter:blur(14px);backdrop-filter:blur(14px)}
+.choice:hover{border-color:var(--accent)}
+.choice .ic{width:46px;height:46px;border-radius:14px;background:var(--field);display:grid;place-items:center;font-size:22px;flex:none}
+.choice b{display:block;font-size:18px;font-weight:600}
+.choice small{display:block;color:var(--muted);font-size:14px;margin-top:2px}
+.linkbtn{display:block;margin:16px auto 0;border:0;background:transparent;color:var(--muted);font-size:14px;text-decoration:underline;text-underline-offset:3px}
+.result{display:flex;align-items:center;gap:12px;padding:10px 0}
+.result+.result{border-top:1px solid var(--line-2)}
+.result .t{flex:1;min-width:0}
+.result .t b{display:block;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.result .t span{font-size:13px;color:var(--muted)}
+.btn.sm{padding:7px 12px;font-size:13px;border-radius:999px;flex:none}
+.btn.primary.sm{font-size:13px;padding:7px 12px}
+.gear{position:relative}
+.reqdot{position:absolute;top:-6px;right:-6px;min-width:18px;height:18px;border-radius:9px;background:var(--neg);color:#fff;font-size:11px;font-style:normal;display:grid;place-items:center;padding:0 4px;font-weight:700}
+.reqbanner{display:flex;align-items:center;justify-content:space-between;width:100%;text-align:left;border-color:var(--accent);font:inherit;color:inherit;cursor:pointer}
+.reqbanner b{display:block;font-size:16px}
+.reqbanner small{color:var(--muted)}
+.linkbox{background:var(--field);border:1px solid var(--line-2);border-radius:12px;padding:11px 12px;font-size:13px;word-break:break-all}
+.invrow{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-top:14px;flex-wrap:wrap;color:var(--ink-2);font-size:14px}
+.mem .mcol{flex:1;min-width:0;display:grid;gap:6px}
+.mname{font-size:17px;padding:10px 2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.rolesel{background:var(--field);border:1px solid var(--line);border-radius:10px;padding:7px 8px;font-size:13px;flex:none;max-width:120px}
+.linksel{max-width:100%;font-size:12px;padding:5px 8px}
+.rtag.head{color:var(--accent)}
+.rtag.adm{color:#F5B942}
+.macts{display:flex;gap:6px;flex:none;flex-wrap:wrap;justify-content:flex-end;max-width:190px}
+.mbtn{border:1px solid var(--line);background:var(--field);border-radius:999px;padding:6px 10px;font-size:12px;font-weight:600;white-space:nowrap}
+.mbtn.on{border-color:#F5B942;color:#F5B942}
+.mbtn.danger{color:var(--neg)}
+.mbtn.sure{background:var(--neg);color:#fff;border-color:transparent}
+.rtag{font-family:"JetBrains Mono",monospace;font-size:11px;color:var(--muted);flex:none;text-align:right;max-width:110px}
+.field{display:block;margin-bottom:14px}
+.field>.label{display:block;margin-bottom:8px}
+.err{color:var(--neg);font-size:13px;min-height:18px;margin:-4px 0 8px}
+.person .btn.sm+.btn.sm{margin-left:0}
+
 </style>
 </head>
 <body>
+<div class="wrap" id="app"></div>
 
-<!-- ============ MAIN PAGE ============ -->
-<div class="wrap page" id="mainPage">
-  <header class="top">
-    <div class="logo" id="logo"></div>
-    <div class="title">
-      <h1 id="messName">Mess Ledger</h1>
-      <p id="memberLine"></p>
-      <div id="roleBadge"></div>
-    </div>
-    <button class="gear" id="openSettings" aria-label="Settings">⚙</button>
-    <div class="monthpill">
-      <button id="prevM" aria-label="Previous month">&lt;</button>
-      <div class="m" id="monthLabel"></div>
-      <button id="nextM" aria-label="Next month">&gt;</button>
-    </div>
-  </header>
+<button class="fab" id="fab" hidden><span style="font-size:20px;line-height:1">+</span>Add purchase</button>
 
-  <div class="tabs" role="tablist">
-    <button role="tab" aria-selected="true" data-tab="ledger">Ledger</button>
-    <button role="tab" aria-selected="false" data-tab="report">Month report</button>
-  </div>
-
-  <main class="stack" id="content"></main>
-  <div class="ro" id="roNote" hidden></div>
-  <div class="sync" id="sync"></div>
-</div>
-
-<!-- ============ SETTINGS PAGE ============ -->
-<div class="wrap page" id="settingsPage" hidden>
-  <div class="shead"><button class="back" id="backBtn" aria-label="Back">←</button><h2>Settings</h2></div>
-
-  <div class="slabel">Mess logo</div>
-  <div class="scard">
-    <div class="logo-row">
-      <div class="logo" id="sLogo"></div>
-      <label class="pillbtn">Upload logo<input type="file" accept="image/*" id="logoFile" hidden></label>
-      <button class="pillbtn" id="logoRemove" hidden>Remove</button>
-    </div>
-  </div>
-
-  <div class="slabel">Mess name &amp; currency</div>
-  <div class="scard" style="display:grid;gap:12px">
-    <input class="input" id="sName" maxlength="40" placeholder="Mess name">
-    <select class="input" id="sCur" aria-label="Currency"></select>
-  </div>
-
-  <div class="slabel">Mess members</div>
-  <div class="scard" id="sMembers" style="margin-bottom:0"></div>
-  <div class="addcard"><input class="input" id="newMember" placeholder="New member name" maxlength="24"><button class="addbtn" id="addMember">+ Add</button></div>
-  <p class="snote">Renaming updates every purchase and monthly report. Removing a member also deletes their purchase records.</p>
-  <div class="err" id="sErr"></div>
-  <button class="btn primary" id="saveSettings" style="width:100%">Save names</button>
-
-  <div id="accessSec" style="margin-top:34px"></div>
-</div>
-
-<button class="fab" id="fab"><span style="font-size:20px;line-height:1">+</span>Add purchase</button>
-
-<!-- ============ ADD PURCHASE SHEET ============ -->
 <div class="scrim" id="pScrim">
   <div class="sheet" role="dialog" aria-modal="true" aria-labelledby="pTitle">
     <div class="sheet-h"><h3 id="pTitle">Add purchase</h3><button class="close" data-close aria-label="Close">✕</button></div>
@@ -366,433 +272,591 @@ select.input{appearance:auto}
     </div>
   </div>
 </div>
-
 <div class="toast" id="toast"></div>
-
 <script>
 (function(){
-const COLORS=["#1F9D6A","#8B6CE0","#E3A21A","#E0567A","#2F86D6","#D2642E","#14A3A3","#9C8A2E"];
-const LS="mess-ledger-v1";
+"use strict";
+/* ============ small helpers ============ */
 const $=s=>document.querySelector(s);
 const esc=s=>String(s==null?"":s).replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
-const uid=()=>Math.random().toString(36).slice(2,10)+Date.now().toString(36).slice(-4);
+const pad=n=>String(n).padStart(2,"0");
+const mk=(y,m)=>y+"-"+pad(m+1);
+const today=()=>{const d=new Date();return d.getFullYear()+"-"+pad(d.getMonth()+1)+"-"+pad(d.getDate())};
+const initials=n=>(n||"M").trim().split(/\s+/).map(w=>w[0]).join("").slice(0,3).toUpperCase();
+const MON=["Jan","Feb","Mar","Apr","May","June","July","Aug","Sept","Oct","Nov","Dec"];
+const PALETTE=["#52E5CB","#A78BFA","#F5B942","#F472B6","#60A5FA","#FB923C","#34D399","#E879F9"];
+const colorAt=i=>PALETTE[((i%PALETTE.length)+PALETTE.length)%PALETTE.length];
 const CURRENCIES=[["SAR","Saudi riyal"],["INR","Indian rupee"],["AED","UAE dirham"],["QAR","Qatari riyal"],["OMR","Omani rial"],["KWD","Kuwaiti dinar"],["BHD","Bahraini dinar"],["USD","US dollar"]];
-const cur=()=>(typeof config!=="undefined"&&config.currency)||"SAR";
 const r2=n=>Math.round((+n||0)*100)/100;
+const cur=()=>(S.mess&&S.mess.currency)||"SAR";
+const curSymbol=c=>{try{return new Intl.NumberFormat("en-IN",{style:"currency",currency:c}).formatToParts(0).find(p=>p.type==="currency").value}catch(e){return c}};
 const numStr=n=>{n=r2(n);const whole=Math.abs(n-Math.round(n))<1e-9;return n.toLocaleString("en-IN",{minimumFractionDigits:whole?0:2,maximumFractionDigits:2})};
 const fmt=n=>curSymbol(cur())+" "+numStr(n);
 const fmtSigned=n=>{const sy=curSymbol(cur());return (r2(n)>0?"+":r2(n)<0?"−":"")+sy+(sy.length>1?" ":"")+numStr(Math.abs(n))};
 const fmtPlain=n=>cur()+" "+r2(n).toLocaleString("en-IN",{minimumFractionDigits:2,maximumFractionDigits:2});
-const curSymbol=c=>{try{return new Intl.NumberFormat("en-IN",{style:"currency",currency:c}).formatToParts(0).find(p=>p.type==="currency").value}catch(e){return c}};
 function parseAmount(v){v=String(v).trim().replace(/\s/g,"");if(v.includes(",")&&!v.includes("."))v=v.replace(",",".");else v=v.replace(/,/g,"");const n=Number(v);return isFinite(n)?r2(n):NaN}
-const pad=n=>String(n).padStart(2,"0");
-const today=()=>{const d=new Date();return d.getFullYear()+"-"+pad(d.getMonth()+1)+"-"+pad(d.getDate())};
-const mk=(y,m)=>y+"-"+pad(m+1);
-const initials=n=>(n||"M").trim().split(/\s+/).map(w=>w[0]).join("").slice(0,3).toUpperCase();
-
-/* ---------- state ---------- */
-let mode="local";                 // "local" until shared storage connects
-let config={name:"Mess Ledger",logo:"",members:[],currency:"SAR"};
-let roles={editors:[],admins:[],links:{}};  // links: userId -> memberId, set by the owner
-let people={};                    // userId -> {memberId}
-let profiles={};                  // userId -> {name,avatarUrl}
-let purchases=[];                 // current month (shared) or all (local)
-let me={id:null,isOwner:true,canWrite:true,name:"",avatarUrl:""};
-let view={y:new Date().getFullYear(),m:new Date().getMonth(),tab:"ledger"};
-let db=null,user=null,downloads=null,unsubMonth=null;
-
-/* local fallback store */
-let local={name:"Mess Ledger",logo:"",members:[],purchases:[]};
-function loadLocal(){try{const r=localStorage.getItem(LS);if(r){const s=JSON.parse(r);if(s&&Array.isArray(s.members))local=Object.assign(local,s)}}catch(e){}}
-function saveLocal(){try{localStorage.setItem(LS,JSON.stringify(local))}catch(e){}}
-function useLocal(){config={name:local.name,logo:local.logo,members:local.members,currency:local.currency||"SAR"};purchases=local.purchases}
-
-/* ---------- permissions ---------- */
-const isOwner=()=>mode==="local"||(mode==="shared"&&me.isOwner);
-const isAdmin=()=>isOwner()||(mode==="shared"&&me.canWrite&&roles.admins.includes(me.id));
-const canManage=()=>isAdmin();
-const canAdd=()=>mode==="local"||(mode==="shared"&&me.canWrite&&(isAdmin()||roles.editors.includes(me.id)));
-const canEditPurchase=p=>isAdmin()||(canAdd()&&p.addedBy&&p.addedBy===me.id);
-const roleOf=id=>roles.admins.includes(id)?"admin":roles.editors.includes(id)?"add":"view";
-const linkOf=id=>(roles.links||{})[id]||null;
-const joined=()=>!!(me.id&&linkOf(me.id));
-
-/* ---------- toast + sync status ---------- */
-let tt;function toast(t){const e=$("#toast");e.textContent=t;e.classList.add("show");clearTimeout(tt);tt=setTimeout(()=>e.classList.remove("show"),2600)}
-function syncMsg(t){$("#sync").textContent=t||""}
-function failMsg(e){
-  const c=e&&e.code;
-  if(c==="invalid_argument"||c==="not_granted"||c==="permission-denied")return "You don't have permission to save here.";
-  if(c==="quota_exceeded")return "Storage is full. Delete some old entries.";
-  if(c==="resource_exhausted")return "Too many changes at once. Try again in a moment.";
-  return "Couldn't save. Check your connection and try again.";
-}
-
-/* ---------- writes ---------- */
-async function writePurchase(p){
-  if(mode==="local"){const i=local.purchases.findIndex(x=>x.id===p.id);if(i>=0)local.purchases[i]=p;else local.purchases.push(p);saveLocal();useLocal();render();return true}
-  const idx=purchases.findIndex(x=>x.id===p.id);const prev=idx>=0?purchases[idx]:null;
-  // optimistic
-  if(idx>=0)purchases[idx]=p;else purchases.push(p);render();
-  try{const {id,...body}=p;await db.collection("purchases").doc(id).set(body);return true}
-  catch(e){if(prev)purchases[idx]=prev;else purchases=purchases.filter(x=>x.id!==p.id);render();toast(failMsg(e));return false}
-}
-async function deletePurchase(id){
-  if(mode==="local"){local.purchases=local.purchases.filter(p=>p.id!==id);saveLocal();useLocal();render();return true}
-  const keep=purchases;purchases=purchases.filter(p=>p.id!==id);render();
-  try{await db.collection("purchases").doc(id).delete();return true}
-  catch(e){purchases=keep;render();toast(failMsg(e));return false}
-}
-async function writeConfig(c){
-  if(mode==="local"){Object.assign(local,c);saveLocal();useLocal();render();return true}
-  try{await db.doc("mess/config").set(c);config=c;render();return true}
-  catch(e){toast(failMsg(e));return false}
-}
-async function writeRoles(r){
-  try{await db.doc("mess/roles").set(r);roles=r;render();return true}
-  catch(e){toast(failMsg(e));return false}
-}
-
-/* ---------- calculations ---------- */
-function monthData(){
-  const key=mk(view.y,view.m);
-  const list=purchases.filter(p=>p.date&&p.date.slice(0,7)===key);
-  const C=v=>Math.round((+v||0)*100);            // work in cents so 5.3 + 4.4 is exactly 9.70
-  const totalC=list.reduce((a,p)=>a+C(p.amount),0);
-  const n=config.members.length||1, shareC=totalC/n;
-  const paidC={};config.members.forEach(m=>paidC[m.id]=0);
-  list.forEach(p=>{if(p.payer in paidC)paidC[p.payer]+=C(p.amount)});
-  const bal=config.members.map(m=>({m,paid:paidC[m.id]/100,balC:paidC[m.id]-shareC,bal:(paidC[m.id]-shareC)/100}));
-  const cr=bal.filter(b=>b.balC>=0.5).map(b=>({m:b.m,v:b.balC})).sort((a,b)=>b.v-a.v);
-  const dr=bal.filter(b=>b.balC<=-0.5).map(b=>({m:b.m,v:-b.balC})).sort((a,b)=>b.v-a.v);
-  const tx=[];let i=0,j=0;
-  while(i<dr.length&&j<cr.length){
-    const x=Math.min(dr[i].v,cr[j].v);
-    if(Math.round(x)>=1)tx.push({from:dr[i].m,to:cr[j].m,amt:Math.round(x)/100});
-    dr[i].v-=x;cr[j].v-=x;if(dr[i].v<0.5)i++;if(cr[j].v<0.5)j++;
-  }
-  return{list,total:totalC/100,share:shareC/100,bal,tx};
-}
-const member=id=>config.members.find(m=>m.id===id);
-
-/* ---------- render ---------- */
-const PALETTE=["#52E5CB","#A78BFA","#F5B942","#F472B6","#60A5FA","#FB923C","#34D399","#E879F9"];
-const colorAt=i=>PALETTE[((i%PALETTE.length)+PALETTE.length)%PALETTE.length];
-const colorOf=m=>colorAt(Math.max(0,config.members.findIndex(x=>x.id===(m&&m.id))));
-function logoHTML(logo,name){return logo?`<img src="${logo}" alt="Mess logo">`:esc(initials(name))}
-function roleBadge(){
-  if(mode!=="shared")return "";
-  const role=me.isOwner?"Owner":isAdmin()?"Admin":canAdd()?"Can add":"View only";
-  const m=joined()?member(linkOf(me.id)):null;
-  const nm=me.name||(m&&m.name)||"You";
-  const av=me.avatarUrl?`<img src="${esc(me.avatarUrl)}" alt="" style="width:16px;height:16px;border-radius:50%;vertical-align:-3px;margin-right:6px">`:"";
-  return `<span class="badge${canAdd()?"":" view"}" title="Signed in with Google">${av}${esc(nm)} · ${role}</span>`;
-}
-function joinCard(){
-  if(mode!=="shared"||me.isOwner||joined()||!me.id)return "";
-  const w=(people[me.id]||{}).want;
-  if(w)return `<div class="card"><div class="label">Request sent</div><div style="font-size:18px;font-weight:600;margin-top:6px">Waiting for the owner to approve you${w==="head"?" as mess head":""}.</div></div>`;
-  const taken=Object.values(roles.links||{}),free=config.members.filter(m=>!taken.includes(m.id));
-  return `<div class="card"><div class="label">Join this mess</div><div style="font-size:20px;font-weight:600;margin:6px 0 12px">Who are you?</div>
-  <select class="input" id="jName"><option value="">${free.length?"Select your name":"Ask the owner to add your name"}</option>${free.map(m=>`<option value="${m.id}">${esc(m.name)}</option>`).join("")}</select>
-  <button class="btn primary" data-join="member" style="width:100%;margin-top:10px">I'm a mess member</button>
-  <button class="btn" data-join="head" style="width:100%;margin-top:8px">I run the mess (mess head)</button></div>`;
-}
-const MON=["Jan","Feb","Mar","Apr","May","June","July","Aug","Sept","Oct","Nov","Dec"];
-const settingsOpen=()=>!$("#settingsPage").hidden;
-function gateHTML(){
-  if(mode==="loading")return `<div class="card empty">Checking your sign-in…</div>`;
-  return `<div class="card" style="text-align:center;padding:34px 22px">
-    <div class="label" style="margin-bottom:10px">Login required</div>
-    <div style="font-size:22px;font-weight:600;margin-bottom:8px">Sign in to open this ledger</div>
-    <p style="color:var(--muted);margin:0 0 20px">Sign in with your Google account. If you can't add or edit after signing in, ask the owner to give you access.</p>
-    <button class="btn primary" id="googleLogin" style="width:100%">Sign in with Google</button></div>`;
-}
-function render(){
-  if(mode==="loading"||mode==="gate"){
-    $("#content").innerHTML=gateHTML();$("#fab").hidden=true;$("#openSettings").hidden=true;$("#roleBadge").innerHTML="";
-    $("#memberLine").textContent="";$("#monthLabel").textContent=new Date(view.y,view.m,1).toLocaleString("en-US",{month:"long"})+" "+view.y;
-    $("#logo").innerHTML=logoHTML("",config.name);
-    const g=$("#googleLogin");if(g)g.onclick=()=>window.messSignIn&&window.messSignIn();
-    $("#roNote").hidden=true;return;
-  }
-  $("#logo").innerHTML=logoHTML(config.logo,config.name);
-  $("#messName").textContent=config.name||"Mess Ledger";
-  $("#memberLine").textContent=config.members.length?config.members.map(m=>m.name).join(" · "):"No members yet";
-  $("#roleBadge").innerHTML=roleBadge();
-  const d=new Date(view.y,view.m,1);
-  $("#monthLabel").textContent=d.toLocaleString("en-US",{month:"long"})+" "+view.y;
-  const abbr=MON[view.m];
-  const D=monthData();
-  const n=config.members.length;
-
-  const hero=`<div class="card hero"><div class="label" style="margin:0">Total spent · ${esc(abbr)}</div>
-    <div class="big">${fmt(D.total)}</div>
-    <div class="sub">${n?`Split across ${n} member${n>1?"s":""} · ${fmt(D.share)} each`:"Add members in settings to start"}</div></div>`;
-
-  let h="";
-  if(view.tab==="ledger"){
-    h+=joinCard()+hero;
-    if(n){
-      const max=Math.max(1,...D.bal.map(b=>b.paid));
-      h+=`<div class="card"><div class="label">Per-member paid</div>`+D.bal.map(b=>`<div class="pm"><div class="pm-h"><span class="n">${esc(b.m.name)} paid</span><span class="v">${fmt(b.paid)}</span></div><div class="track"><i style="width:${(b.paid/max*100).toFixed(1)}%;background:${colorOf(b.m)}"></i></div></div>`).join("")+`</div>`;
-    }
-    if(!D.list.length){
-      h+=`<div class="empty">No purchases this month</div>`;
-    }else{
-      const sorted=[...D.list].sort((a,b)=>b.date.localeCompare(a.date)||(b.created||0)-(a.created||0));
-      let cur="",block="";
-      sorted.forEach(p=>{
-        if(p.date!==cur){cur=p.date;const dd=new Date(p.date+"T00:00");
-          block+=`<div class="day">${dd.toLocaleDateString("en-GB",{weekday:"short"})}, ${dd.getDate()} ${MON[dd.getMonth()]}</div>`}
-        const m=member(p.payer);const editable=canEditPurchase(p);
-        const adder=mode==="shared"&&p.addedBy?"Added by "+addedByName(p.addedBy):"";
-        block+=`<div class="row"><i class="dot" style="background:${m?colorOf(m):"#888"}"></i>
-          <button class="it" data-edit="${p.id}" title="${esc(adder)}">${esc(p.item)}</button>
-          <span class="who">${m?esc(m.name):"Removed"}</span><span class="amt">${fmt(p.amount)}</span>
-          ${editable?`<button class="x" data-del="${p.id}" aria-label="Delete ${esc(p.item)}">×</button>`:""}</div>`;
-      });
-      h+=`<div>${block}</div>`;
-    }
-  }else{
-    h+=hero;
-    h+=`<div class="dl"><button class="btn" id="dlCsv">↓ Download CSV</button><button class="btn" id="dlPdf">↓ Download PDF</button></div>`;
-    h+=`<div class="card"><div class="label">Who owes whom</div>`+(D.tx.length?D.tx.map(t=>`<div class="owe"><div class="av" style="background:${colorOf(t.from)}">${esc((t.from.name[0]||"?").toUpperCase())}</div><div class="t">${esc(t.from.name)} pays <em>${esc(t.to.name)}</em></div><div class="v">${fmt(t.amt)}</div></div>`).join("")
-      :`<div class="zero" style="padding:4px 0">${D.total?"Everyone is settled up.":"Nothing to settle yet."}</div>`)+`</div>`;
-    if(n){
-      const monthFull=d.toLocaleString("en-US",{month:"long"})+" "+view.y;
-      h+=`<div class="card" style="padding-bottom:10px"><div class="label" style="margin-bottom:4px">Member balances · ${esc(monthFull)}</div>`+D.bal.map(b=>{
-        const cls=b.balC>=0.5?"pos":b.balC<=-0.5?"neg":"zero";
-        return `<div class="bal"><div class="av" style="background:${colorOf(b.m)}">${esc((b.m.name[0]||"?").toUpperCase())}</div><div class="n">${esc(b.m.name)}</div>
-          <div class="r">paid ${fmt(b.paid)}<span class="d ${cls}">${cls==="zero"?"settled":fmtSigned(b.bal)}</span></div></div>`}).join("")+`</div>`;
-    }
-    h+=`<div class="card"><div class="label">Month summary</div><div class="sum">
-      <div><strong>${D.list.length}</strong><span class="label" style="letter-spacing:.16em">Purchases</span></div>
-      <div><strong>${fmt(D.total)}</strong><span class="label" style="letter-spacing:.16em">Total</span></div>
-      <div><strong>${fmt(D.share)}</strong><span class="label" style="letter-spacing:.16em">Per head</span></div></div></div>`;
-  }
-  $("#content").innerHTML=h;
-
-  document.querySelectorAll("[data-tab]").forEach(b=>b.setAttribute("aria-selected",b.dataset.tab===view.tab));
-  const c=$("#dlCsv");if(c)c.onclick=dlCSV;
-  const pdf=$("#dlPdf");if(pdf)pdf.onclick=dlPDF;
-  document.querySelectorAll("[data-edit]").forEach(b=>b.onclick=()=>openPurchase(b.dataset.edit));
-  document.querySelectorAll("[data-del]").forEach(b=>b.onclick=()=>armConfirm(b,"Delete?",async()=>{if(await deletePurchase(b.dataset.del))toast("Purchase deleted")}));
-  document.querySelectorAll("[data-join]").forEach(b=>b.onclick=()=>joinAs(b.dataset.join));
-
-  $("#fab").hidden=!canAdd()||settingsOpen();
-  $("#openSettings").hidden=!canManage();
-  const ro=$("#roNote");
-  if(!canAdd()&&mode==="shared"){ro.hidden=false;ro.textContent="You can view everything. The owner decides who can add purchases."}
-  else ro.hidden=true;
-}
-function addedByName(id){
-  if(id===me.id)return "you";
-  const pm=member(linkOf(id));
-  if(pm)return pm.name;
-  return (profiles[id]&&profiles[id].name)||"owner";
-}
-
-/* ---------- sheets ---------- */
-function openSheet(id){$(id).classList.add("open")}
-function closeSheets(){document.querySelectorAll(".scrim").forEach(s=>s.classList.remove("open"))}
-document.querySelectorAll("[data-close]").forEach(b=>b.onclick=closeSheets);
-document.querySelectorAll(".scrim").forEach(s=>s.addEventListener("click",e=>{if(e.target===s)closeSheets()}));
-document.addEventListener("keydown",e=>{if(e.key==="Escape")closeSheets()});
-
-/* two-tap confirm (browser confirm() dialogs are blocked inside artifacts) */
+function genCode(){const a="abcdefghjkmnpqrstuvwxyz23456789";let s="";const b=new Uint32Array(8);crypto.getRandomValues(b);b.forEach(x=>s+=a[x%a.length]);return s}
+let tt;function toast(t){const e=$("#toast");e.textContent=t;e.classList.add("show");clearTimeout(tt);tt=setTimeout(()=>e.classList.remove("show"),2800)}
+function failMsg(e){const c=e&&e.code;
+  if(c==="permission-denied")return "You don't have permission to do that.";
+  if(c==="unavailable")return "You're offline. Check your connection.";
+  return "Something went wrong. Please try again.";}
 function armConfirm(btn,label,action){
   if(btn.dataset.armed){action();return}
   btn.dataset.armed="1";const old=btn.innerHTML;btn.innerHTML=label;btn.classList.add("sure");
   setTimeout(()=>{if(btn.isConnected){delete btn.dataset.armed;btn.innerHTML=old;btn.classList.remove("sure")}},3000);
 }
+const inviteUrl=code=>location.origin+location.pathname+"?join="+code;
 
+/* ============ Firebase ============ */
+const cfg=window.MESS_FIREBASE_CONFIG||{};
+if(!window.firebase||!cfg.apiKey){document.body.innerHTML='<p style="padding:30px;font-family:sans-serif">Firebase config missing.</p>';return}
+firebase.initializeApp(cfg);
+const auth=firebase.auth(), fs=firebase.firestore();
+const FV=firebase.firestore.FieldValue;
+const messRef=id=>fs.collection("messes").doc(id);
+const peopleCol=id=>messRef(id).collection("people");
+const reqCol=id=>messRef(id).collection("requests");
+const purCol=id=>messRef(id).collection("purchases");
+const userRef=uid=>fs.collection("users").doc(uid);
+
+/* ============ state ============ */
+const S={
+  user:null, profile:{}, screen:"loading",
+  invite:null,            // {code,messId,role,name,headName}
+  ob:"choose",            // onboarding step: choose | member | head
+  messId:null, mess:null, people:{}, requests:[], purchases:[],
+  view:{y:new Date().getFullYear(),m:new Date().getMonth(),tab:"ledger"},
+  inSettings:false, myMesses:[]
+};
+let leaving=false;
+let unsub=[], unsubMonth=null, unsubReq=null, unsubPending=null;
+const me=()=>S.user&&S.people[S.user.uid];
+const role=()=>me()?me().role:null;
+const isHead=()=>role()==="head";
+const isAdmin=()=>["head","admin"].includes(role());
+const canAdd=()=>!!role();
+const canEditP=p=>isAdmin()||(canAdd()&&p.addedBy===S.user.uid);
+const ROLE_LABEL={head:"Mess head",admin:"Admin",editor:"Member",viewer:"Member"};
+
+/* invite code from link (kept through sign-in) */
+let joinCode=new URLSearchParams(location.search).get("join");
+if(joinCode)sessionStorage.setItem("mess-join",joinCode);else joinCode=sessionStorage.getItem("mess-join");
+function clearJoin(){joinCode=null;S.invite=null;sessionStorage.removeItem("mess-join");if(location.search)history.replaceState(null,"",location.pathname)}
+
+/* ============ members (names used as "paid by") ============ */
+function members(){
+  const list=((S.mess&&S.mess.members)||[]).map(m=>({id:m.id,name:m.name,manual:true}));
+  Object.entries(S.people).sort((a,b)=>(a[1].joinedAt||0)-(b[1].joinedAt||0)).forEach(([uid,p])=>{
+    const linked=p.memberId&&p.memberId!==uid?list.find(x=>x.id===p.memberId):null;
+    if(linked){linked.uid=uid}else list.push({id:uid,name:p.name||"Member",uid});
+  });
+  return list.map((m,i)=>({...m,color:colorAt(i)}));
+}
+const member=id=>members().find(m=>m.id===id);
+
+/* ============ calculations (in halalas/paise so decimals are exact) ============ */
+function monthData(){
+  const key=mk(S.view.y,S.view.m), ms=members();
+  const list=S.purchases.filter(p=>p.date&&p.date.slice(0,7)===key);
+  const C=v=>Math.round((+v||0)*100);
+  const totalC=list.reduce((a,p)=>a+C(p.amount),0);
+  const n=ms.length||1, shareC=totalC/n;
+  const paidC={};ms.forEach(m=>paidC[m.id]=0);
+  list.forEach(p=>{if(p.payer in paidC)paidC[p.payer]+=C(p.amount)});
+  const bal=ms.map(m=>({m,paid:paidC[m.id]/100,balC:paidC[m.id]-shareC,bal:(paidC[m.id]-shareC)/100}));
+  const cr=bal.filter(b=>b.balC>=0.5).map(b=>({m:b.m,v:b.balC})).sort((a,b)=>b.v-a.v);
+  const dr=bal.filter(b=>b.balC<=-0.5).map(b=>({m:b.m,v:-b.balC})).sort((a,b)=>b.v-a.v);
+  const tx=[];let i=0,j=0;
+  while(i<dr.length&&j<cr.length){const x=Math.min(dr[i].v,cr[j].v);
+    if(Math.round(x)>=1)tx.push({from:dr[i].m,to:cr[j].m,amt:Math.round(x)/100});
+    dr[i].v-=x;cr[j].v-=x;if(dr[i].v<0.5)i++;if(cr[j].v<0.5)j++;}
+  return{list,total:totalC/100,share:shareC/100,bal,tx};
+}
+
+/* ============ boot ============ */
+auth.getRedirectResult().catch(e=>toast("Sign-in failed: "+(e.message||e.code)));
+auth.onAuthStateChanged(async u=>{
+  stopAll();S.user=u;
+  if(!u){S.screen="login";render();return}
+  S.screen="loading";render();
+  try{await userRef(u.uid).set({name:u.displayName||"",avatarUrl:u.photoURL||"",updatedAt:Date.now()},{merge:true})}catch(e){}
+  try{const d=await userRef(u.uid).get();S.profile=d.exists?d.data():{}}catch(e){S.profile={}}
+
+  if(joinCode&&await loadInvite(joinCode)){
+    const pd=await peopleCol(S.invite.messId).doc(u.uid).get().catch(()=>null);
+    if(pd&&pd.exists){const id=S.invite.messId;clearJoin();return openMess(id)}
+    S.screen="onboard";S.ob="choose";render();return;
+  }
+  if(S.profile.current&&await isMemberOf(S.profile.current))return openMess(S.profile.current);
+  if(S.profile.pending){S.screen="onboard";watchPending();render();return}
+  // fall back to any mess they belong to
+  for(const id of (S.profile.messIds||[])){if(id!==S.profile.current&&await isMemberOf(id))return openMess(id)}
+  S.screen="onboard";S.ob="choose";render();
+});
+async function isMemberOf(id){try{const d=await peopleCol(id).doc(S.user.uid).get();return d.exists}catch(e){return false}}
+async function loadInvite(code){
+  try{
+    const inv=await fs.collection("invites").doc(code).get();
+    if(!inv.exists){toast("This invite link has expired. Ask the mess head for a new one.");clearJoin();return false}
+    const d=inv.data();const dir=await fs.collection("directory").doc(d.messId).get();
+    S.invite={code,messId:d.messId,role:d.role||"editor",name:dir.exists?dir.data().name:"a mess",headName:dir.exists?dir.data().headName:""};
+    return true;
+  }catch(e){toast(failMsg(e));clearJoin();return false}
+}
+function stopAll(){unsub.forEach(f=>{try{f()}catch(e){}});unsub=[];
+  [unsubMonth,unsubReq,unsubPending].forEach(f=>{if(f)try{f()}catch(e){}});unsubMonth=unsubReq=unsubPending=null}
+
+/* ============ open a mess (live) ============ */
+function openMess(id){
+  stopAll();
+  S.messId=id;S.mess=null;S.people={};S.requests=[];S.purchases=[];S.inSettings=false;S.screen="app";
+  userRef(S.user.uid).set({current:id,messIds:FV.arrayUnion(id),pending:FV.delete()},{merge:true}).catch(()=>{});
+  S.profile.current=id;
+  unsub.push(messRef(id).onSnapshot(s=>{
+    if(!s.exists){leftMess("This mess no longer exists.");return}
+    S.mess=s.data();refresh();
+  },e=>{if(e.code==="permission-denied")leftMess("You're no longer a member of this mess.")}));
+  unsub.push(peopleCol(id).onSnapshot(s=>{
+    S.people={};s.docs.forEach(d=>S.people[d.id]=d.data());
+    if(!S.people[S.user.uid]){leftMess(leaving?"You left the mess.":"You were removed from this mess.");leaving=false;return}
+    if(isHead()&&!unsubReq){unsubReq=reqCol(id).orderBy("at").onSnapshot(r=>{S.requests=r.docs.map(d=>({id:d.id,...d.data()}));refresh()},()=>{})}
+    if(!isHead()&&unsubReq){unsubReq();unsubReq=null;S.requests=[]}
+    refresh();
+  },()=>{}));
+  subscribeMonth();
+  render();
+}
+function leftMess(msg){
+  stopAll();toast(msg);
+  const id=S.messId;S.messId=null;S.mess=null;S.people={};
+  if(S.user)userRef(S.user.uid).set({current:FV.delete(),messIds:FV.arrayRemove(id)},{merge:true}).catch(()=>{});
+  S.profile.current=null;S.screen="onboard";S.ob="choose";render();
+}
+function subscribeMonth(){
+  if(unsubMonth){unsubMonth();unsubMonth=null}
+  if(!S.messId)return;
+  const {y,m}=S.view;const start=mk(y,m)+"-01";const end=mk(m===11?y+1:y,m===11?0:m+1)+"-01";
+  unsubMonth=purCol(S.messId).where("date",">=",start).where("date","<",end).onSnapshot(s=>{
+    S.purchases=s.docs.map(d=>({id:d.id,...d.data()}));refresh();
+  },()=>{});
+}
+function refresh(){ if(S.screen!=="app")return; if(S.inSettings)drawSettingsLive(); else render(); }
+
+/* ============ render ============ */
+function render(){
+  const app=$("#app");
+  $("#fab").hidden=true;
+  if(S.screen==="loading"){app.innerHTML=`<div class="center"><div class="card empty">Loading…</div></div>`;return}
+  if(S.screen==="login"){app.innerHTML=loginHTML();bindLogin();return}
+  if(S.screen==="onboard"){app.innerHTML=onboardHTML();bindOnboard();return}
+  if(S.inSettings){S.setKey=role()+"|"+!!S.mess;app.innerHTML=settingsHTML();bindSettings();drawSettingsLive();return}
+  app.innerHTML=mainHTML();bindMain();
+  $("#fab").hidden=!canAdd();
+}
+
+/* ---------- login ---------- */
+function loginHTML(){
+  const inv=joinCode?`<p style="color:var(--accent);margin:0 0 14px">You've been invited to join a mess. Sign in to continue.</p>`:"";
+  return `<div class="center"><div class="brand"><div class="logo">ML</div><div class="display" style="font-size:24px;font-weight:600">Mess Ledger</div></div>
+  <div class="card" style="text-align:center;padding:30px 22px">
+    <div class="label" style="margin-bottom:10px">Sign in</div>
+    <div style="font-size:21px;font-weight:600;margin-bottom:8px">Split mess costs with your roommates</div>
+    ${inv}<p style="color:var(--muted);margin:0 0 20px">Use your Google account to sign in.</p>
+    <button class="btn primary" id="googleLogin" style="width:100%">Sign in with Google</button></div></div>`;
+}
+function bindLogin(){
+  $("#googleLogin").onclick=async()=>{
+    const p=new firebase.auth.GoogleAuthProvider();
+    try{await auth.signInWithPopup(p)}
+    catch(e){
+      if(e&&(e.code==="auth/popup-blocked"||e.code==="auth/operation-not-supported-in-this-environment"))return auth.signInWithRedirect(p);
+      if(e&&(e.code==="auth/popup-closed-by-user"||e.code==="auth/cancelled-popup-request"))return;
+      toast("Sign-in failed: "+(e.message||e.code));
+    }
+  };
+}
+
+/* ---------- onboarding: mess member / mess head ---------- */
+function onboardHTML(){
+  const nm=esc(S.user.displayName||"");
+  const top=`<div class="brand"><div class="logo">ML</div><div><div class="display" style="font-size:22px;font-weight:600">Mess Ledger</div>
+    <div class="label" style="letter-spacing:.12em">Signed in as ${esc(S.user.displayName||S.user.email||"")}</div></div></div>`;
+  const pend=S.profile.pending;
+  if(pend){
+    return `<div class="center">${top}<div class="card"><div class="label">Request sent</div>
+      <div style="font-size:20px;font-weight:600;margin:6px 0 8px">Waiting for the head of ${esc(pend.name)} to approve you</div>
+      <p style="color:var(--muted);margin:0 0 16px">You'll get in automatically once they approve. You can keep this page open.</p>
+      <button class="btn" id="cancelReq" style="width:100%">Cancel request</button></div>
+      <button class="linkbtn" id="signOut">Sign out</button></div>`;
+  }
+  let h=`<div class="center">${top}`;
+  if(S.ob==="choose"){
+    if(S.invite){
+      h+=`<div class="card"><div class="label">You're invited</div>
+        <div style="font-size:22px;font-weight:600;margin:6px 0 4px">${esc(S.invite.name)}</div>
+        <p style="color:var(--muted);margin:0">${S.invite.headName?"Mess head: "+esc(S.invite.headName):""}</p></div>`;
+    }
+    h+=`<div class="label" style="margin:22px 4px 12px">How will you use Mess Ledger?</div>
+      <button class="choice" data-ob="member"><span class="ic">👤</span><span><b>Mess member</b><small>${S.invite?"Join "+esc(S.invite.name)+" as a member":"Find your mess and join it"}</small></span></button>
+      <button class="choice" data-ob="head"><span class="ic">👑</span><span><b>Mess head</b><small>Start a new mess and invite your members</small></span></button>`;
+    if(S.profile.messIds&&S.profile.messIds.length)h+=`<button class="linkbtn" id="backToMess">Back to my mess</button>`;
+  }
+  if(S.ob==="member"){
+    if(S.invite){
+      h+=`<div class="card"><div class="label">Join as a member</div>
+        <div style="font-size:20px;font-weight:600;margin:6px 0 14px">${esc(S.invite.name)}</div>
+        <label class="field"><span class="label">Your name in this mess</span><input class="input" id="obName" value="${nm}" maxlength="24"></label>
+        <button class="btn primary" id="joinInvite" style="width:100%">Join mess</button></div>`;
+    }else{
+      h+=`<div class="card"><div class="label">Find your mess</div>
+        <input class="input" id="obSearch" placeholder="Search mess name…" autocomplete="off" style="margin-top:4px">
+        <div id="obResults" style="margin-top:12px"><div class="zero">Type at least 2 letters of your mess name.</div></div>
+        <p class="zero" style="margin:14px 0 0;font-size:13px">Got an invite link from your mess head? Just open it to join straight away.</p></div>`;
+    }
+    h+=`<button class="linkbtn" data-ob="choose">← Back</button>`;
+  }
+  if(S.ob==="head"){
+    h+=`<div class="card"><div class="label">Start a new mess</div>
+      <label class="field" style="margin-top:8px"><span class="label">Mess name</span><input class="input" id="hmName" placeholder="e.g. ASR Mess, Room 12" maxlength="40"></label>
+      <label class="field"><span class="label">Your name</span><input class="input" id="hmYou" value="${nm}" maxlength="24"></label>
+      <label class="field"><span class="label">Currency</span><select class="input" id="hmCur">${CURRENCIES.map(([c,n])=>`<option value="${c}">${n} (${curSymbol(c)})</option>`).join("")}</select></label>
+      <div class="err" id="hmErr"></div>
+      <button class="btn primary" id="createMess" style="width:100%">Create mess</button></div>
+      <button class="linkbtn" data-ob="choose">← Back</button>`;
+  }
+  h+=`<button class="linkbtn" id="signOut">Sign out</button></div>`;
+  return h;
+}
+function bindOnboard(){
+  document.querySelectorAll("[data-ob]").forEach(b=>b.onclick=()=>{S.ob=b.dataset.ob;render()});
+  const so=$("#signOut");if(so)so.onclick=()=>auth.signOut();
+  const back=$("#backToMess");if(back)back.onclick=async()=>{for(const id of S.profile.messIds){if(await isMemberOf(id))return openMess(id)}toast("You're not in any mess yet")};
+  const cr=$("#cancelReq");if(cr)cr.onclick=cancelRequest;
+  const ji=$("#joinInvite");if(ji)ji.onclick=joinViaInvite;
+  const cm=$("#createMess");if(cm)cm.onclick=createMess;
+  const se=$("#obSearch");if(se){let t;se.oninput=()=>{clearTimeout(t);t=setTimeout(()=>runSearch(se.value),300)};se.focus()}
+}
+
+async function joinViaInvite(){
+  const btn=$("#joinInvite");const name=($("#obName").value||"").trim()||S.user.displayName||"Member";
+  const {messId,code,role}=S.invite;
+  btn.disabled=true;btn.textContent="Joining…";
+  try{
+    await peopleCol(messId).doc(S.user.uid).set({name,role,memberId:S.user.uid,code,joinedAt:Date.now()});
+    clearJoin();openMess(messId);toast("Welcome to the mess!");
+  }catch(e){btn.disabled=false;btn.textContent="Join mess";toast(e.code==="permission-denied"?"This invite link is no longer valid. Ask the mess head for a new one.":failMsg(e))}
+}
+async function createMess(){
+  const name=$("#hmName").value.trim(), you=$("#hmYou").value.trim()||S.user.displayName||"Mess head", currency=$("#hmCur").value;
+  if(!name){$("#hmErr").textContent="Give your mess a name.";return}
+  const btn=$("#createMess");btn.disabled=true;btn.textContent="Creating…";
+  const id=fs.collection("messes").doc().id, code=genCode(), uid=S.user.uid, now=Date.now();
+  const b=fs.batch();
+  b.set(messRef(id),{name,nameLower:name.toLowerCase(),logo:"",currency,headUid:uid,members:[],inviteCode:code,defaultRole:"editor",createdAt:now});
+  b.set(peopleCol(id).doc(uid),{name:you,role:"head",memberId:uid,joinedAt:now});
+  b.set(fs.collection("directory").doc(id),{name,nameLower:name.toLowerCase(),headName:you,headUid:uid,createdAt:now});
+  b.set(fs.collection("invites").doc(code),{messId:id,role:"editor",createdBy:uid,createdAt:now});
+  try{await b.commit();clearJoin();openMess(id);S.inSettings=true;render();toast("Mess created. Share your invite link with your members.")}
+  catch(e){btn.disabled=false;btn.textContent="Create mess";$("#hmErr").textContent=failMsg(e)}
+}
+
+/* search bar */
+async function runSearch(q){
+  const box=$("#obResults");if(!box)return;
+  q=q.trim().toLowerCase();
+  if(q.length<2){box.innerHTML=`<div class="zero">Type at least 2 letters of your mess name.</div>`;return}
+  box.innerHTML=`<div class="zero">Searching…</div>`;
+  try{
+    const s=await fs.collection("directory").orderBy("nameLower").startAt(q).endAt(q+"\uf8ff").limit(15).get();
+    if(!s.docs.length){box.innerHTML=`<div class="zero">No mess found with that name.</div>`;return}
+    box.innerHTML=s.docs.map(d=>{const x=d.data();const mine=(S.profile.messIds||[]).includes(d.id);
+      return `<div class="result"><div class="av" style="background:${colorAt(x.name.length)}">${esc(initials(x.name))}</div>
+        <div class="t"><b>${esc(x.name)}</b><span>Head: ${esc(x.headName||"—")}</span></div>
+        ${mine?`<button class="btn" data-open="${d.id}">Open</button>`:`<button class="btn primary sm" data-req="${d.id}" data-name="${esc(x.name)}">Request to join</button>`}</div>`}).join("");
+    box.querySelectorAll("[data-req]").forEach(b=>b.onclick=()=>requestJoin(b.dataset.req,b.dataset.name,b));
+    box.querySelectorAll("[data-open]").forEach(b=>b.onclick=async()=>{if(await isMemberOf(b.dataset.open))openMess(b.dataset.open);else b.outerHTML=`<button class="btn primary sm" disabled>Removed</button>`});
+  }catch(e){box.innerHTML=`<div class="zero">${esc(failMsg(e))}</div>`}
+}
+async function requestJoin(messId,name,btn){
+  btn.disabled=true;btn.textContent="Sending…";
+  try{
+    await reqCol(messId).doc(S.user.uid).set({name:S.user.displayName||S.user.email||"Someone",avatarUrl:S.user.photoURL||"",at:Date.now()});
+    await userRef(S.user.uid).set({pending:{messId,name}},{merge:true});
+    S.profile.pending={messId,name};watchPending();render();
+  }catch(e){btn.disabled=false;btn.textContent="Request to join";toast(failMsg(e))}
+}
+function watchPending(){
+  if(unsubPending){unsubPending();unsubPending=null}
+  const p=S.profile.pending;if(!p)return;
+  unsubPending=reqCol(p.messId).doc(S.user.uid).onSnapshot(async s=>{
+    if(s.exists)return;
+    unsubPending();unsubPending=null;
+    if(await isMemberOf(p.messId)){toast("You've been approved!");openMess(p.messId)}
+    else{toast("Your request to join "+p.name+" was declined.");S.profile.pending=null;userRef(S.user.uid).set({pending:FV.delete()},{merge:true}).catch(()=>{});render()}
+  },()=>{});
+}
+async function cancelRequest(){
+  const p=S.profile.pending;if(!p)return;
+  if(unsubPending){unsubPending();unsubPending=null}
+  try{await reqCol(p.messId).doc(S.user.uid).delete()}catch(e){}
+  await userRef(S.user.uid).set({pending:FV.delete()},{merge:true}).catch(()=>{});
+  S.profile.pending=null;S.ob="choose";render();
+}
+
+/* ---------- main ledger ---------- */
+function logoHTML(logo,name){return logo?`<img src="${logo}" alt="Mess logo">`:esc(initials(name))}
+function mainHTML(){
+  const M=S.mess||{name:"…"};const ms=members();const D=monthData();const n=ms.length;
+  const {y,m,tab}=S.view;
+  const my=me()||{};
+  const reqDot=isHead()&&S.requests.length?`<i class="reqdot">${S.requests.length}</i>`:"";
+  let h=`<header class="top">
+    <div class="logo">${logoHTML(M.logo,M.name)}</div>
+    <div class="title"><h1>${esc(M.name)}</h1><p>${esc(ms.map(x=>x.name).join(" · "))}</p>
+      <span class="badge${canAdd()?"":" view"}">${esc(my.name||"")} · ${ROLE_LABEL[role()]||""}</span></div>
+    <button class="gear" id="openSettings" aria-label="Settings">⚙${reqDot}</button>
+    <div class="monthpill"><button id="prevM" aria-label="Previous month">&lt;</button><div class="m">${new Date(y,m,1).toLocaleString("en-US",{month:"long"})} ${y}</div><button id="nextM" aria-label="Next month">&gt;</button></div>
+  </header>
+  <div class="tabs" role="tablist"><button role="tab" aria-selected="${tab==="ledger"}" data-tab="ledger">Ledger</button><button role="tab" aria-selected="${tab==="report"}" data-tab="report">Month report</button></div>
+  <main class="stack">`;
+  if(isHead()&&S.requests.length)h+=`<button class="card reqbanner" id="goReq"><span><b>${S.requests.length} join request${S.requests.length>1?"s":""}</b><small>Tap to approve or decline</small></span><span>›</span></button>`;
+  h+=`<div class="card hero"><div class="label" style="margin:0">Total spent · ${MON[m]}</div><div class="big">${fmt(D.total)}</div>
+    <div class="sub">${n?`Split across ${n} member${n>1?"s":""} · ${fmt(D.share)} each`:"No members yet"}</div></div>`;
+  if(tab==="ledger"){
+    if(n){const max=Math.max(1,...D.bal.map(b=>b.paid));
+      h+=`<div class="card"><div class="label">Per-member paid</div>`+D.bal.map(b=>`<div class="pm"><div class="pm-h"><span class="n">${esc(b.m.name)} paid</span><span class="v">${fmt(b.paid)}</span></div><div class="track"><i style="width:${(b.paid/max*100).toFixed(1)}%;background:${b.m.color}"></i></div></div>`).join("")+`</div>`}
+    if(!D.list.length)h+=`<div class="empty">No purchases this month</div>`;
+    else{
+      const sorted=[...D.list].sort((a,b)=>b.date.localeCompare(a.date)||(b.created||0)-(a.created||0));
+      let curD="",block="";
+      sorted.forEach(p=>{
+        if(p.date!==curD){curD=p.date;const dd=new Date(p.date+"T00:00");block+=`<div class="day">${dd.toLocaleDateString("en-GB",{weekday:"short"})}, ${dd.getDate()} ${MON[dd.getMonth()]}</div>`}
+        const pm=member(p.payer);const ed=canEditP(p);
+        const adder=p.addedBy&&S.people[p.addedBy]?"Added by "+S.people[p.addedBy].name:"";
+        block+=`<div class="row"><i class="dot" style="background:${pm?pm.color:"#888"}"></i>
+          <button class="it" ${ed?`data-edit="${p.id}"`:""} title="${esc(adder)}">${esc(p.item)}</button>
+          <span class="who">${pm?esc(pm.name):"Removed"}</span><span class="amt">${fmt(p.amount)}</span>
+          ${ed?`<button class="x" data-del="${p.id}" aria-label="Delete ${esc(p.item)}">×</button>`:""}</div>`;
+      });
+      h+=`<div>${block}</div>`;
+    }
+  }else{
+    h+=`<div class="dl"><button class="btn" id="dlCsv">↓ Download CSV</button><button class="btn" id="dlPdf">↓ Download PDF</button></div>`;
+    h+=`<div class="card"><div class="label">Who owes whom</div>`+(D.tx.length?D.tx.map(t=>`<div class="owe"><div class="av" style="background:${t.from.color}">${esc((t.from.name[0]||"?").toUpperCase())}</div><div class="t">${esc(t.from.name)} pays <em>${esc(t.to.name)}</em></div><div class="v">${fmt(t.amt)}</div></div>`).join(""):`<div class="zero" style="padding:4px 0">${D.total?"Everyone is settled up.":"Nothing to settle yet."}</div>`)+`</div>`;
+    if(n)h+=`<div class="card" style="padding-bottom:10px"><div class="label" style="margin-bottom:4px">Member balances · ${new Date(y,m,1).toLocaleString("en-US",{month:"long"})} ${y}</div>`+D.bal.map(b=>{
+      const cls=b.balC>=0.5?"pos":b.balC<=-0.5?"neg":"zero";
+      return `<div class="bal"><div class="av" style="background:${b.m.color}">${esc((b.m.name[0]||"?").toUpperCase())}</div><div class="n">${esc(b.m.name)}</div><div class="r">paid ${fmt(b.paid)}<span class="d ${cls}">${cls==="zero"?"settled":fmtSigned(b.bal)}</span></div></div>`}).join("")+`</div>`;
+    h+=`<div class="card"><div class="label">Month summary</div><div class="sum"><div><strong>${D.list.length}</strong><span class="label" style="letter-spacing:.16em">Purchases</span></div><div><strong>${fmt(D.total)}</strong><span class="label" style="letter-spacing:.16em">Total</span></div><div><strong>${fmt(D.share)}</strong><span class="label" style="letter-spacing:.16em">Per head</span></div></div></div>`;
+  }
+  if(!canAdd())h+=`<div class="zero" style="text-align:center;font-size:13px">You can view this mess. The mess head decides who can add purchases.</div>`;
+  return h+`</main>`;
+}
+function bindMain(){
+  $("#openSettings").onclick=()=>{S.inSettings=true;window.scrollTo(0,0);render()};
+  const gr=$("#goReq");if(gr)gr.onclick=()=>{S.inSettings=true;render();setTimeout(()=>{const r=$("#setRequests");if(r)r.scrollIntoView({behavior:"smooth"})},50)};
+  $("#prevM").onclick=()=>shift(-1);$("#nextM").onclick=()=>shift(1);
+  document.querySelectorAll("[data-tab]").forEach(b=>b.onclick=()=>{S.view.tab=b.dataset.tab;render()});
+  document.querySelectorAll("[data-edit]").forEach(b=>b.onclick=()=>openPurchase(b.dataset.edit));
+  document.querySelectorAll("[data-del]").forEach(b=>b.onclick=()=>armConfirm(b,"Delete?",async()=>{try{await purCol(S.messId).doc(b.dataset.del).delete();toast("Purchase deleted")}catch(e){toast(failMsg(e))}}));
+  const c=$("#dlCsv");if(c)c.onclick=dlCSV;const p=$("#dlPdf");if(p)p.onclick=dlPDF;
+}
+function shift(n){const v=S.view;v.m+=n;if(v.m<0){v.m=11;v.y--}if(v.m>11){v.m=0;v.y++}subscribeMonth();render()}
+
+/* ---------- add / edit purchase ---------- */
 let editing=null,payerSel=null,busy=false;
+function openSheet(){$("#pScrim").classList.add("open")}
+function closeSheets(){document.querySelectorAll(".scrim").forEach(s=>s.classList.remove("open"))}
+document.querySelectorAll("[data-close]").forEach(b=>b.onclick=closeSheets);
+document.querySelectorAll(".scrim").forEach(s=>s.addEventListener("click",e=>{if(e.target===s)closeSheets()}));
+document.addEventListener("keydown",e=>{if(e.key==="Escape")closeSheets()});
+$("#fab").onclick=()=>openPurchase(null);
 function openPurchase(id){
-  const p=id?purchases.find(x=>x.id===id):null;
-  if(p&&!canEditPurchase(p)){toast(canAdd()?"You can only edit entries you added.":"View only");return}
-  if(!p&&!canAdd()){toast("View only");return}
-  if(!config.members.length){if(canManage())openSettings();return}
+  const p=id?S.purchases.find(x=>x.id===id):null;
+  if(p&&!canEditP(p))return; if(!p&&!canAdd())return;
+  const ms=members();if(!ms.length)return;
   editing=p;
   $("#pTitle").textContent=p?"Edit purchase":"Add purchase";
-  $("#pItem").value=p?p.item:"";
-  $("#pAmt").value=p?p.amount:"";
-  const mine=linkOf(me.id);
-  payerSel=p?p.payer:(payerSel&&member(payerSel)?payerSel:(mine&&member(mine)?mine:config.members[0].id));
-  const now=new Date();const inView=now.getFullYear()===view.y&&now.getMonth()===view.m;
-  $("#pDate").value=p?p.date:(inView?today():mk(view.y,view.m)+"-01");
+  $("#pItem").value=p?p.item:"";$("#pAmt").value=p?p.amount:"";
+  const mine=me()&&me().memberId;
+  payerSel=p?p.payer:(payerSel&&member(payerSel)?payerSel:(mine&&member(mine)?mine:ms[0].id));
+  const now=new Date();const inView=now.getFullYear()===S.view.y&&now.getMonth()===S.view.m;
+  $("#pDate").value=p?p.date:(inView?today():mk(S.view.y,S.view.m)+"-01");
   const del=$("#pDelete");del.hidden=!p;delete del.dataset.armed;del.textContent="Delete";del.classList.remove("sure");
   $("#pErr").textContent="";$("#pSave").disabled=false;$("#pSave").textContent="Save purchase";
   const sym=curSymbol(cur());$("#curSym").textContent=sym;$("#pAmt").parentElement.style.setProperty("--symw",(sym.length*0.62+0.4)+"em");
-  drawPayers();openSheet("#pScrim");setTimeout(()=>$("#pItem").focus(),60);
+  drawPayers();openSheet();setTimeout(()=>$("#pItem").focus(),60);
 }
 function drawPayers(){
-  $("#pPayer").innerHTML=config.members.map(m=>`<button class="chip" aria-pressed="${m.id===payerSel}" data-m="${m.id}"><i class="dot" style="background:${colorOf(m)}"></i>${esc(m.name)}</button>`).join("");
+  $("#pPayer").innerHTML=members().map(m=>`<button class="chip" aria-pressed="${m.id===payerSel}" data-m="${m.id}"><i class="dot" style="background:${m.color}"></i>${esc(m.name)}</button>`).join("");
   document.querySelectorAll("#pPayer .chip").forEach(c=>c.onclick=()=>{payerSel=c.dataset.m;drawPayers()});
 }
 $("#pSave").onclick=async()=>{
   if(busy)return;
-  const item=$("#pItem").value.trim();
-  const amount=parseAmount($("#pAmt").value);
-  const date=$("#pDate").value;
+  const item=$("#pItem").value.trim(), amount=parseAmount($("#pAmt").value), date=$("#pDate").value;
   if(!item){$("#pErr").textContent="Enter what you bought.";return}
   if(!(amount>0)){$("#pErr").textContent="Enter an amount above zero.";return}
   if(!date){$("#pErr").textContent="Pick a date.";return}
   if(!member(payerSel)){$("#pErr").textContent="Choose who paid.";return}
-  const p=editing?{...editing,item,amount,payer:payerSel,date}:{id:uid(),item,amount,payer:payerSel,date,created:Date.now(),addedBy:me.id||null};
-  const [y,m]=date.split("-").map(Number);
-  const wasEdit=!!editing;
   busy=true;$("#pSave").disabled=true;$("#pSave").textContent="Saving…";
-  if(y!==view.y||m-1!==view.m){view.y=y;view.m=m-1;subscribeMonth()}
-  closeSheets();
-  const ok=await writePurchase(p);
-  busy=false;
-  if(ok)toast(wasEdit?"Purchase updated":"Purchase saved");
+  try{
+    if(editing)await purCol(S.messId).doc(editing.id).update({item,amount,payer:payerSel,date});
+    else await purCol(S.messId).add({item,amount,payer:payerSel,date,created:Date.now(),addedBy:S.user.uid});
+    const [y,m]=date.split("-").map(Number);
+    if(y!==S.view.y||m-1!==S.view.m){S.view.y=y;S.view.m=m-1;subscribeMonth()}
+    closeSheets();toast(editing?"Purchase updated":"Purchase saved");
+  }catch(e){$("#pErr").textContent=failMsg(e)}
+  busy=false;$("#pSave").disabled=false;$("#pSave").textContent="Save purchase";
 };
-$("#pDelete").onclick=e=>{
-  if(!editing)return;
-  armConfirm(e.currentTarget,"Tap again to delete",async()=>{const id=editing.id;closeSheets();if(await deletePurchase(id))toast("Purchase deleted")});
-};
+$("#pDelete").onclick=e=>{if(!editing)return;armConfirm(e.currentTarget,"Tap again to delete",async()=>{try{await purCol(S.messId).doc(editing.id).delete();closeSheets();toast("Purchase deleted")}catch(er){toast(failMsg(er))}})};
 $("#pAmt").addEventListener("keydown",e=>{if(e.key==="Enter")$("#pSave").click()});
 
-/* ---------- join ---------- */
-async function joinAs(kind){
-  const sel=$("#jName"),memberId=sel?sel.value:"";
-  if(kind==="member"&&!memberId){toast("Select your name first");return}
-  try{await db.doc("people/"+me.id).set({memberId:memberId||null,want:kind,joinedAt:Date.now()},{merge:true});people[me.id]={...people[me.id],memberId,want:kind};render();toast("Request sent. Waiting for the owner.")}
-  catch(e){toast(failMsg(e))}
-}
-async function makeOwner(id){
-  if(!confirm("Make this person the owner? You will become an admin."))return;
-  const ad=new Set(roles.admins);ad.add(me.id);ad.delete(id);const ed=new Set(roles.editors);ed.delete(id);
-  if(!await writeRoles({editors:[...ed],admins:[...ad],links:{...(roles.links||{})}}))return;
-  try{await db.doc("mess/owner").set({uid:id,claimedAt:Date.now()});toast("Ownership transferred");setTimeout(()=>location.reload(),1200)}
-  catch(e){toast(failMsg(e))}
-}
-
-/* ---------- settings page ---------- */
-let draft=null,counts={};
-function showPage(settings){
-  $("#mainPage").hidden=settings;$("#settingsPage").hidden=!settings;
-  window.scrollTo(0,0);render();
-}
-function openSettings(){
-  if(!canManage()){toast("Only the owner can change settings");return}
-  draft={name:config.name,logo:config.logo,currency:cur(),members:config.members.map(m=>({...m})),removed:[]};
-  $("#sCur").innerHTML=CURRENCIES.map(([c,n])=>`<option value="${c}"${c===draft.currency?" selected":""}>${n} (${curSymbol(c)})</option>`).join("");
-  $("#sCur").onchange=()=>{draft.currency=$("#sCur").value};
-  $("#sName").value=draft.name;$("#sErr").textContent="";$("#newMember").value="";
-  showPage(true);drawDraft();drawAccess();loadCounts();
-}
-async function loadCounts(){
-  counts={};
-  if(mode==="local"){local.purchases.forEach(p=>counts[p.payer]=(counts[p.payer]||0)+1);drawDraft();return}
-  for(const m of config.members){
-    try{const s=await db.collection("purchases").where("payer","==",m.id).limit(1000).get();counts[m.id]=s.docs.length}catch(e){}
+/* ---------- settings ---------- */
+let draftLogo=null;
+function settingsHTML(){
+  const M=S.mess||{};
+  draftLogo=M.logo||"";
+  let h=`<div class="shead"><button class="back" id="backBtn" aria-label="Back">←</button><h2>Settings</h2></div>`;
+  if(isHead())h+=`<div class="slabel">Invite members</div><div class="scard" id="setInvite"></div>
+    <div id="setRequests"></div>`;
+  if(isAdmin()){
+    h+=`<div class="slabel">Mess logo</div><div class="scard"><div class="logo-row"><div class="logo" id="sLogo"></div>
+        <label class="pillbtn">Upload logo<input type="file" accept="image/*" id="logoFile" hidden></label>
+        <button class="pillbtn" id="logoRemove" ${draftLogo?"":"hidden"}>Remove</button></div></div>
+      <div class="slabel">Mess name &amp; currency</div><div class="scard" style="display:grid;gap:12px">
+        <input class="input" id="sName" maxlength="40" value="${esc(M.name||"")}" placeholder="Mess name">
+        <select class="input" id="sCur">${CURRENCIES.map(([c,n])=>`<option value="${c}"${c===cur()?" selected":""}>${n} (${curSymbol(c)})</option>`).join("")}</select>
+        <button class="btn primary" id="saveMess" style="border-radius:14px">Save</button></div>`;
   }
-  if(settingsOpen())drawDraft();
+  h+=`<div class="slabel">Mess members</div><div class="scard" id="setMembers" style="margin-bottom:0"></div>`;
+  h+=`<p class="snote" style="margin-top:12px">Members join through your invite link and appear here automatically.${isAdmin()?" Removing a member also deletes their purchases.":""}</p>`;
+  h+=`<div class="slabel">Your account</div><div class="scard" id="setAccount"></div>`;
+  return h;
 }
-function drawDraft(){
-  $("#sLogo").innerHTML=logoHTML(draft.logo,draft.name);
-  $("#logoRemove").hidden=!draft.logo;
-  $("#sMembers").innerHTML=draft.members.length?draft.members.map((m,i)=>`<div class="mem"><i class="dot" style="background:${colorAt(i)}"></i><input class="input" data-i="${i}" value="${esc(m.name)}" maxlength="24" aria-label="Member name"><span class="cnt">${counts[m.id]!=null?counts[m.id]:""}</span><button class="rm" data-rm="${i}" aria-label="Remove ${esc(m.name)}">×</button></div>`).join("")
-    :`<div class="zero">No members yet. Add everyone who shares the mess cost.</div>`;
-  document.querySelectorAll("#sMembers input").forEach(inp=>inp.oninput=()=>{draft.members[+inp.dataset.i].name=inp.value});
-  document.querySelectorAll("#sMembers [data-rm]").forEach(b=>b.onclick=()=>armConfirm(b,"Remove?",()=>{
-    const m=draft.members[+b.dataset.rm];draft.removed.push(m.id);draft.members.splice(+b.dataset.rm,1);drawDraft();
-  }));
-}
-function drawAccess(){
-  const box=$("#accessSec");
-  if(mode!=="shared"||!me.isOwner){box.innerHTML="";return}
-  const ids=Object.keys(people).filter(id=>id!==me.id);
-  let h=`<div class="slabel">Permissions</div><div class="scard">`;
-  h+=`<div class="help">Only you, the owner, can give permissions. <b>View</b> sees everything. <b>Can add</b> adds purchases and edits their own. <b>Admin</b> also edits all entries and members.</div><div style="padding:0 14px 14px"><b>Invite roommates</b><div class="help">Send this link. They sign in with Google, then choose <b>Mess member</b> or <b>Mess head</b>. You approve them below.</div><div style="display:flex;gap:8px"><button class="btn" id="invCopy">Copy link</button><a class="btn primary" id="invWa" target="_blank" rel="noopener">WhatsApp</a></div></div>`;
-  if(!ids.length)h+=`<div class="zero">Nobody has opened the ledger yet.</div>`;
-  else h+=ids.map(id=>{
-    const pr=profiles[id]||{};const m=member(linkOf(id));const role=roleOf(id);const p=people[id]||{},pm=member(p.memberId);
-    const rq=p.want==="head"?`<div class="help" style="margin:4px 0">Says they run the mess <button class="btn primary" data-head="${id}" style="padding:4px 10px;font-size:12px">Make owner</button></div>`:(p.want==="member"&&!linkOf(id)&&pm)?`<div class="help" style="margin:4px 0">Wants to join as <b>${esc(pm.name)}</b> <button class="btn primary" data-ok="${id}" style="padding:4px 10px;font-size:12px">Approve</button></div>`:"";
-    return `<div class="person" style="flex-wrap:wrap">${pr.avatarUrl?`<img src="${esc(pr.avatarUrl)}" alt="">`:`<div class="av" style="background:${m?colorOf(m):"#888"}">${esc(initials(pr.name||(m?m.name:"?")))}</div>`}
-      <div class="t"><b>${esc(pr.name||"Someone")}</b>${rq}
-        <select class="input" data-link="${id}" aria-label="Which member" style="padding:6px 8px;font-size:13px;margin-top:4px;width:auto;max-width:100%">
-          <option value="">Not linked to a member</option>${config.members.map(x=>`<option value="${x.id}"${m&&m.id===x.id?" selected":""}>${esc(x.name)}</option>`).join("")}
-        </select></div>
-      <div class="seg" role="group" aria-label="Permission"><button data-role="view" data-u="${id}" aria-pressed="${role==="view"}">View</button><button data-role="add" data-u="${id}" aria-pressed="${role==="add"}">Can add</button><button data-role="admin" data-u="${id}" aria-pressed="${role==="admin"}">Admin</button></div></div>`;
-  }).join("");
-  box.innerHTML=h+`</div>`;
-  const url=location.origin+location.pathname;
-  $("#invWa").href="https://wa.me/?text="+encodeURIComponent("Join our mess ledger: "+url);
-  $("#invCopy").onclick=()=>{(navigator.clipboard?navigator.clipboard.writeText(url):Promise.reject()).then(()=>toast("Link copied"),()=>prompt("Copy this link",url))};
-  box.querySelectorAll("[data-head]").forEach(b=>b.onclick=()=>makeOwner(b.dataset.head));
-  box.querySelectorAll("[data-ok]").forEach(b=>b.onclick=async()=>{const id=b.dataset.ok,ed=new Set(roles.editors);ed.add(id);
-    if(await writeRoles({editors:[...ed],admins:[...roles.admins],links:{...(roles.links||{}),[id]:people[id].memberId}})){drawAccess();toast("Approved as member")}});
-  box.querySelectorAll("[data-role]").forEach(b=>b.onclick=async()=>{
-    const id=b.dataset.u,role=b.dataset.role;
-    const ed=new Set(roles.editors),ad=new Set(roles.admins);ed.delete(id);ad.delete(id);
-    if(role==="add")ed.add(id);if(role==="admin")ad.add(id);
-    if(await writeRoles({editors:[...ed],admins:[...ad],links:{...(roles.links||{})}})){drawAccess();toast(role==="admin"?"Made admin":role==="add"?"Can add purchases now":"Changed to view only")}
-  });
-  box.querySelectorAll("[data-link]").forEach(sel=>sel.onchange=async()=>{
-    const links={...(roles.links||{})};if(sel.value)links[sel.dataset.link]=sel.value;else delete links[sel.dataset.link];
-    if(await writeRoles({editors:[...roles.editors],admins:[...roles.admins],links}))toast("Member linked");else drawAccess();
-  });
-}
-$("#backBtn").onclick=()=>showPage(false);
-$("#addMember").onclick=()=>{const v=$("#newMember").value.trim();if(!v)return;draft.members.push({id:uid(),name:v});$("#newMember").value="";drawDraft();$("#newMember").focus()};
-$("#newMember").addEventListener("keydown",e=>{if(e.key==="Enter")$("#addMember").click()});
-$("#sName").oninput=()=>{draft.name=$("#sName").value;if(!draft.logo)$("#sLogo").innerHTML=logoHTML("",draft.name)};
-$("#logoRemove").onclick=()=>{draft.logo="";drawDraft()};
-$("#logoFile").onchange=e=>{
-  const f=e.target.files[0];if(!f)return;
-  const img=new Image();const url=URL.createObjectURL(f);
-  img.onload=()=>{const S=160,c=document.createElement("canvas");c.width=c.height=S;const x=c.getContext("2d");x.fillStyle="#fff";x.fillRect(0,0,S,S);const s=Math.min(img.width,img.height);
-    x.drawImage(img,(img.width-s)/2,(img.height-s)/2,s,s,0,0,S,S);draft.logo=c.toDataURL("image/jpeg",.9);URL.revokeObjectURL(url);drawDraft()};
-  img.onerror=()=>{$("#sErr").textContent="That file could not be read as an image."};
-  img.src=url;e.target.value="";
-};
-$("#saveSettings").onclick=async()=>{
-  const names=draft.members.map(m=>m.name.trim());
-  if(names.some(n=>!n)){$("#sErr").textContent="Every member needs a name.";return}
-  const lower=names.map(n=>n.toLowerCase());
-  if(new Set(lower).size!==lower.length){$("#sErr").textContent="Two members have the same name.";return}
-  draft.members=draft.members.map(m=>({id:m.id,name:m.name.trim()}));
-  const btn=$("#saveSettings");btn.disabled=true;btn.textContent="Saving…";
-  const ok=await writeConfig({name:(draft.name||"").trim()||"Mess Ledger",logo:draft.logo,members:draft.members,currency:draft.currency||"SAR"});
-  if(ok&&draft.removed.length)await removePurchasesOf(draft.removed);
-  btn.disabled=false;btn.textContent="Save names";
-  if(ok){showPage(false);toast("Saved")}
-};
-
-async function removePurchasesOf(ids){
-  if(mode==="local"){local.purchases=local.purchases.filter(p=>!ids.includes(p.payer));saveLocal();useLocal();render();return}
-  for(const id of ids){
-    try{const snap=await db.collection("purchases").where("payer","==",id).limit(1000).get();
-      for(const d of snap.docs){await db.collection("purchases").doc(d.id).delete()}}catch(e){}
+function bindSettings(){
+  $("#backBtn").onclick=()=>{S.inSettings=false;render()};
+  if(isAdmin()){
+    $("#sLogo").innerHTML=logoHTML(draftLogo,S.mess.name);
+    $("#logoRemove").onclick=()=>{draftLogo="";$("#sLogo").innerHTML=logoHTML("",S.mess.name);$("#logoRemove").hidden=true};
+    $("#logoFile").onchange=e=>{
+      const f=e.target.files[0];if(!f)return;const img=new Image(),url=URL.createObjectURL(f);
+      img.onload=()=>{const Z=160,c=document.createElement("canvas");c.width=c.height=Z;const x=c.getContext("2d");x.fillStyle="#fff";x.fillRect(0,0,Z,Z);const s=Math.min(img.width,img.height);
+        x.drawImage(img,(img.width-s)/2,(img.height-s)/2,s,s,0,0,Z,Z);draftLogo=c.toDataURL("image/jpeg",.9);URL.revokeObjectURL(url);$("#sLogo").innerHTML=logoHTML(draftLogo,"");$("#logoRemove").hidden=false};
+      img.onerror=()=>toast("That file could not be read as an image.");img.src=url;e.target.value="";
+    };
+    $("#saveMess").onclick=async()=>{
+      const name=$("#sName").value.trim();if(!name){toast("Give your mess a name.");return}
+      const b=fs.batch();
+      b.update(messRef(S.messId),{name,nameLower:name.toLowerCase(),currency:$("#sCur").value,logo:draftLogo});
+      b.update(fs.collection("directory").doc(S.messId),{name,nameLower:name.toLowerCase()});
+      try{await b.commit();toast("Saved")}catch(e){toast(failMsg(e))}
+    };
   }
 }
-
-/* ---------- nav ---------- */
-function shift(n){view.m+=n;if(view.m<0){view.m=11;view.y--}if(view.m>11){view.m=0;view.y++}if(mode==="shared")subscribeMonth();render()}
-$("#prevM").onclick=()=>shift(-1);
-$("#nextM").onclick=()=>shift(1);
-document.querySelectorAll("[data-tab]").forEach(b=>b.onclick=()=>{view.tab=b.dataset.tab;render()});
-$("#openSettings").onclick=openSettings;
-$("#fab").onclick=()=>openPurchase(null);
+function drawSettingsLive(){
+  if(!S.inSettings)return;
+  if(S.setKey!==role()+"|"+!!S.mess){render();return}               // role or mess loaded after the page was built
+  if(isHead()&&$("#setInvite"))drawInvite();
+  if(isHead()&&$("#setRequests"))drawRequests();
+  const box=$("#setMembers");if(box&&!box.contains(document.activeElement))drawMembers();
+  drawAccount();
+}
+function drawInvite(){
+  const M=S.mess;if(!M)return;
+  const url=inviteUrl(M.inviteCode);
+  $("#setInvite").innerHTML=`<div class="help" style="margin-bottom:10px">Share this link. People who open it sign in and join <b>${esc(M.name)}</b> as members. Only this mess, only through your link.</div>
+    <div class="linkbox mono">${esc(url)}</div>
+    <div style="display:flex;gap:8px;margin-top:10px"><button class="btn" id="invCopy" style="flex:1">Copy link</button><a class="btn primary" id="invWa" target="_blank" rel="noopener" style="flex:1;text-decoration:none;border-radius:14px;padding:11px">WhatsApp</a></div>
+    <button class="linkbtn" id="invNew" style="margin:12px 0 0">Make a new link (old link stops working)</button>`;
+  $("#invWa").href="https://wa.me/?text="+encodeURIComponent("Join our mess \""+M.name+"\" on Mess Ledger: "+url);
+  $("#invCopy").onclick=()=>{(navigator.clipboard?navigator.clipboard.writeText(url):Promise.reject()).then(()=>toast("Link copied"),()=>window.prompt("Copy this link",url))};
+  $("#invNew").onclick=e=>armConfirm(e.currentTarget,"Tap again to make a new link",()=>newInvite("editor"));
+}
+async function newInvite(roleForLink){
+  const M=S.mess,code=genCode(),b=fs.batch();
+  b.set(fs.collection("invites").doc(code),{messId:S.messId,role:roleForLink,createdBy:S.user.uid,createdAt:Date.now()});
+  if(M.inviteCode)b.delete(fs.collection("invites").doc(M.inviteCode));
+  b.update(messRef(S.messId),{inviteCode:code,defaultRole:roleForLink});
+  try{await b.commit();toast("New invite link ready")}catch(e){toast(failMsg(e))}
+}
+function drawRequests(){
+  const box=$("#setRequests");
+  if(!S.requests.length){box.innerHTML="";return}
+  box.innerHTML=`<div class="slabel">Join requests</div><div class="scard">`+S.requests.map(r=>`<div class="person">
+    ${r.avatarUrl?`<img src="${esc(r.avatarUrl)}" alt="">`:`<div class="av" style="background:#888">${esc(initials(r.name))}</div>`}
+    <div class="t"><b>${esc(r.name)}</b><span>wants to join</span></div>
+    <button class="btn sm" data-no="${r.id}">Decline</button><button class="btn primary sm" data-yes="${r.id}">Approve</button></div>`).join("")+`</div>`;
+  box.querySelectorAll("[data-yes]").forEach(b=>b.onclick=async()=>{
+    const r=S.requests.find(x=>x.id===b.dataset.yes);if(!r)return;b.disabled=true;
+    const bt=fs.batch();
+    bt.set(peopleCol(S.messId).doc(r.id),{name:r.name,role:"editor",memberId:r.id,joinedAt:Date.now(),via:"request"});
+    bt.delete(reqCol(S.messId).doc(r.id));
+    try{await bt.commit();toast(r.name+" joined the mess")}catch(e){b.disabled=false;toast(failMsg(e))}
+  });
+  box.querySelectorAll("[data-no]").forEach(b=>b.onclick=async()=>{try{await reqCol(S.messId).doc(b.dataset.no).delete();toast("Request declined")}catch(e){toast(failMsg(e))}});
+}
+function drawMembers(){
+  const box=$("#setMembers");const ms=members();const head=isHead(),admin=isAdmin();
+  box.innerHTML=ms.length?ms.map(m=>{
+    const p=m.uid?S.people[m.uid]:null;const self=m.uid===S.user.uid;const r=p?p.role:"editor";
+    const tag=r==="head"?`<span class="rtag head">Mess head</span>`:r==="admin"?`<span class="rtag adm">Admin</span>`:"";
+    let acts="";
+    if(!self&&r!=="head"){
+      if(head)acts+=`<button class="mbtn${r==="admin"?" on":""}" data-adm="${m.uid}">${r==="admin"?"Remove admin":"Make admin"}</button>`;
+      if(head||(admin&&r!=="admin"))acts+=`<button class="mbtn danger" data-rm="${m.id}">Remove</button>`;
+    }
+    const nameEl=self?`<input class="input" id="myName" value="${esc(m.name)}" maxlength="24" aria-label="Your name">`:`<div class="mname">${esc(m.name)}</div>`;
+    return `<div class="mem"><i class="dot" style="background:${m.color}"></i><div class="mcol">${nameEl}${tag?`<div>${tag}${self?`<span class="rtag"> · you</span>`:""}</div>`:(self?`<div><span class="rtag">You</span></div>`:"")}</div>${acts?`<div class="macts">${acts}</div>`:""}</div>`;
+  }).join(""):`<div class="zero">No members yet. Share your invite link.</div>`;
+  box.querySelectorAll("[data-adm]").forEach(b=>b.onclick=async()=>{
+    const id=b.dataset.adm,next=S.people[id].role==="admin"?"editor":"admin";b.disabled=true;
+    try{await peopleCol(S.messId).doc(id).update({role:next});toast(next==="admin"?S.people[id].name+" is now an admin":"Admin removed")}catch(e){b.disabled=false;toast(failMsg(e))}
+  });
+  box.querySelectorAll("[data-rm]").forEach(b=>b.onclick=()=>armConfirm(b,"Sure?",()=>removeMember(b.dataset.rm)));
+  const myName=$("#myName");if(myName){
+    myName.onchange=async()=>{const v=myName.value.trim();if(!v)return;try{await peopleCol(S.messId).doc(S.user.uid).update({name:v});if(isHead())fs.collection("directory").doc(S.messId).update({headName:v}).catch(()=>{});toast("Name updated")}catch(e){toast(failMsg(e))}};
+    myName.addEventListener("blur",()=>setTimeout(()=>{if(!box.contains(document.activeElement))drawMembers()},200));
+  }
+}
+async function removeMember(id){
+  const m=members().find(x=>x.id===id);if(!m)return;
+  try{
+    const snap=await purCol(S.messId).where("payer","==",id).get();
+    for(const d of snap.docs)await d.ref.delete();
+    if(m.uid)await peopleCol(S.messId).doc(m.uid).delete();
+    if(m.manual)await messRef(S.messId).update({members:(S.mess.members||[]).filter(x=>x.id!==id)});
+    toast(m.name+" removed");
+  }catch(e){toast(failMsg(e))}
+}
+async function drawAccount(){
+  const box=$("#setAccount");if(!box)return;
+  const ids=(S.profile.messIds||[]).filter(x=>x!==S.messId);
+  box.innerHTML=`<div class="person"><img src="${esc(S.user.photoURL||"")}" alt="" onerror="this.style.display='none'"><div class="t"><b>${esc(S.user.displayName||"")}</b><span>${esc(S.user.email||"")}</span></div></div>
+    <div id="otherMesses"></div>
+    <div style="display:grid;gap:8px;margin-top:12px">
+      <button class="btn" id="newOrJoin">Start or join another mess</button>
+      ${isHead()?"":`<button class="btn danger" id="leaveMess">Leave this mess</button>`}
+      <button class="btn" id="signOutBtn">Sign out</button></div>`;
+  $("#newOrJoin").onclick=()=>{stopAll();S.screen="onboard";S.ob="choose";render()};
+  $("#signOutBtn").onclick=()=>auth.signOut();
+  const lv=$("#leaveMess");if(lv)lv.onclick=()=>armConfirm(lv,"Tap again to leave",async()=>{leaving=true;try{await peopleCol(S.messId).doc(S.user.uid).delete()}catch(e){leaving=false;toast(failMsg(e))}});
+  if(ids.length){
+    const rows=await Promise.all(ids.map(async id=>{try{const d=await fs.collection("directory").doc(id).get();return d.exists?{id,name:d.data().name}:null}catch(e){return null}}));
+    const om=$("#otherMesses");if(!om)return;
+    om.innerHTML=rows.filter(Boolean).map(r=>`<div class="person"><div class="av" style="background:${colorAt(r.name.length)}">${esc(initials(r.name))}</div><div class="t"><b>${esc(r.name)}</b><span>Your other mess</span></div><button class="btn sm" data-sw="${r.id}">Open</button></div>`).join("");
+    om.querySelectorAll("[data-sw]").forEach(b=>b.onclick=async()=>{if(await isMemberOf(b.dataset.sw))openMess(b.dataset.sw);else{toast("You're no longer in that mess");userRef(S.user.uid).set({messIds:FV.arrayRemove(b.dataset.sw)},{merge:true});S.profile.messIds=S.profile.messIds.filter(x=>x!==b.dataset.sw);drawAccount()}});
+  }
+}
 
 /* ---------- downloads ---------- */
-function fileBase(){return (config.name||"mess").replace(/[^\w]+/g,"-").toLowerCase()+"-"+mk(view.y,view.m)}
-async function save(filename,data){
-  if(downloads){
-    try{await downloads.save({filename,data});return}
-    catch(e){if(e&&e.code==="declined")return;if(e&&e.code==="rate_limited"){toast("Please try again in a moment");return}}
-  }
+function fileBase(){return ((S.mess&&S.mess.name)||"mess").replace(/[^\w]+/g,"-").toLowerCase()+"-"+mk(S.view.y,S.view.m)}
+function save(filename,data){
   try{const blob=data instanceof Blob?data:new Blob([data],{type:"text/csv"});
     const a=document.createElement("a");a.href=URL.createObjectURL(blob);a.download=filename;document.body.appendChild(a);a.click();a.remove();}
   catch(e){toast("Download isn't available here")}
 }
 function dlCSV(){
-  const D=monthData();const q=s=>'"'+String(s).replace(/"/g,'""')+'"';
-  const f2=n=>r2(n).toFixed(2);
+  const D=monthData();const q=s=>'"'+String(s).replace(/"/g,'""')+'"';const f2=n=>r2(n).toFixed(2);
   const rows=[["Date","Item","Paid by","Amount ("+cur()+")"]];
   [...D.list].sort((a,b)=>a.date.localeCompare(b.date)).forEach(p=>rows.push([p.date,p.item,(member(p.payer)||{}).name||"",f2(p.amount)]));
   rows.push([],["Total","","",f2(D.total)],["Per head","","",f2(D.share)],[],["Member","Paid","Share","Balance"]);
@@ -802,24 +866,23 @@ function dlCSV(){
 }
 function dlPDF(){
   if(!window.jspdf){toast("PDF tool didn't load. Try CSV.");return}
-  const D=monthData();const doc=new window.jspdf.jsPDF({unit:"pt",format:"a4"});
+  const M=S.mess||{};const D=monthData();const doc=new window.jspdf.jsPDF({unit:"pt",format:"a4"});
   const W=doc.internal.pageSize.getWidth();let y=56;const L=48,R=W-48;
-  const month=new Date(view.y,view.m,1).toLocaleString("en-IN",{month:"long",year:"numeric"});
-  const line=()=>{doc.setDrawColor(210);doc.line(L,y,R,y);y+=16};
-  const check=()=>{if(y>780){doc.addPage();y=56}};
-  if(config.logo){try{doc.addImage(config.logo,"PNG",L,y-24,40,40)}catch(e){}}
-  const x0=config.logo?L+52:L;
-  doc.setFont("helvetica","bold");doc.setFontSize(20);doc.text(config.name||"Mess Ledger",x0,y);
+  const month=new Date(S.view.y,S.view.m,1).toLocaleString("en-IN",{month:"long",year:"numeric"});
+  const line=()=>{doc.setDrawColor(210);doc.line(L,y,R,y);y+=16};const check=()=>{if(y>780){doc.addPage();y=56}};
+  if(M.logo){try{doc.addImage(M.logo,M.logo.includes("image/png")?"PNG":"JPEG",L,y-24,40,40)}catch(e){}}
+  const x0=M.logo?L+52:L;
+  doc.setFont("helvetica","bold");doc.setFontSize(20);doc.text(M.name||"Mess Ledger",x0,y);
   doc.setFont("helvetica","normal");doc.setFontSize(11);doc.setTextColor(100);doc.text("Monthly report, "+month,x0,y+16);doc.setTextColor(0);y+=46;
   doc.setFontSize(12);doc.text("Total spent: "+fmtPlain(D.total),L,y);doc.text("Per head: "+fmtPlain(D.share),L+200,y);doc.text("Purchases: "+D.list.length,L+360,y);y+=22;line();
   doc.setFont("helvetica","bold");doc.text("Settle up",L,y);y+=18;doc.setFont("helvetica","normal");
   if(!D.tx.length){doc.text("Everyone is even.",L,y);y+=18}
-  D.tx.forEach(t=>{doc.text(`${t.from.name} pays ${t.to.name}`,L,y);doc.text(fmtPlain(t.amt),R,y,{align:"right"});y+=18});
+  D.tx.forEach(t=>{check();doc.text(`${t.from.name} pays ${t.to.name}`,L,y);doc.text(fmtPlain(t.amt),R,y,{align:"right"});y+=18});
   y+=6;line();
   doc.setFont("helvetica","bold");doc.text("Member balances",L,y);y+=18;
   doc.setFontSize(10);doc.setTextColor(110);doc.text("Member",L,y);doc.text("Paid",L+240,y,{align:"right"});doc.text("Share",L+340,y,{align:"right"});doc.text("Balance",R,y,{align:"right"});y+=16;
   doc.setTextColor(0);doc.setFont("helvetica","normal");doc.setFontSize(11);
-  D.bal.forEach(b=>{doc.text(b.m.name,L,y);doc.text(fmtPlain(b.paid),L+240,y,{align:"right"});doc.text(fmtPlain(D.share),L+340,y,{align:"right"});
+  D.bal.forEach(b=>{check();doc.text(b.m.name,L,y);doc.text(fmtPlain(b.paid),L+240,y,{align:"right"});doc.text(fmtPlain(D.share),L+340,y,{align:"right"});
     const v=r2(b.bal);doc.text((v>0?"+":v<0?"-":"")+fmtPlain(Math.abs(v)),R,y,{align:"right"});y+=18});
   y+=6;line();
   doc.setFont("helvetica","bold");doc.setFontSize(12);doc.text("Purchases",L,y);y+=18;
@@ -830,67 +893,8 @@ function dlPDF(){
   save(fileBase()+".pdf",doc.output("blob"));
 }
 
-/* ---------- shared storage ---------- */
-function subscribeMonth(){
-  if(unsubMonth){try{unsubMonth()}catch(e){}unsubMonth=null}
-  const start=mk(view.y,view.m)+"-01";
-  const ny=view.m===11?view.y+1:view.y, nm=view.m===11?0:view.m+1;
-  const end=mk(ny,nm)+"-01";
-  const q=db.collection("purchases").where("date",">=",start).where("date","<",end).limit(1000);
-  unsubMonth=q.onSnapshot(snap=>{
-    purchases=snap.docs.map(d=>({id:d.id,...d.data()}));render();resolveProfiles();
-  },e=>syncMsg("Live updates paused. Reload the page to reconnect."));
-}
-async function resolveProfiles(){
-  const ids=[...new Set([...Object.keys(people),...purchases.map(p=>p.addedBy).filter(Boolean)])];
-  if(!user||!ids.length)return;
-  try{const ps=await user.profiles(ids);for(const id in ps)profiles[id]={name:ps[id].name||"",avatarUrl:ps[id].avatarUrl||""};render();if(settingsOpen())drawAccess()}catch(e){}
-}
-async function migrateIfNeeded(){
-  // bring over data from the earlier version (single document) or this browser
-  try{
-    const cfg=await db.doc("mess/config").get();
-    if(cfg.exists)return;
-    let src=null;
-    const old=await db.doc("mess/ledger").get();
-    if(old.exists){const d=old.data();if(d&&Array.isArray(d.members))src=d}
-    if(!src&&(local.members.length||local.purchases.length))src=local;
-    if(!src)return;
-    await db.doc("mess/config").set({name:src.name||"Mess Ledger",logo:src.logo||"",members:src.members||[]});
-    for(const p of (src.purchases||[])){const {id,...body}=p;await db.collection("purchases").doc(id||uid()).set({...body,addedBy:me.id||null})}
-    toast("Your earlier entries were moved over");
-  }catch(e){}
-}
-
-async function connect(){
-  if(!(window.claude&&window.claude.use))return;
-  mode="loading";render();
-  window.claude.use("downloads").then(d=>{downloads=d}).catch(()=>{});
-  try{
-    db=await window.claude.use("db");
-    if(!db){mode="gate";render();return}
-    user=await window.claude.use("user").catch(()=>null);
-    if(user){
-      try{const v=await user.me();me.id=v.id;me.isOwner=!!v.isOwner;me.name=v.name||"";me.avatarUrl=v.avatarUrl||""}catch(e){me.isOwner=false}
-      if(!me.id){mode="gate";render();return}
-      try{const c=await user.can("data.write");me.canWrite=c!==false}catch(e){}
-    }else{me.isOwner=false}
-    mode="shared";
-    config={name:"Mess Ledger",logo:"",members:[],currency:"SAR"};purchases=[];
-    render();syncMsg("Synced for everyone with access");
-    if(me.isOwner)await migrateIfNeeded();
-    db.doc("mess/config").onSnapshot(s=>{if(s.exists){const d=s.data();config={name:d.name||"Mess Ledger",logo:d.logo||"",members:Array.isArray(d.members)?d.members:[],currency:d.currency||"SAR"};render()}},()=>{});
-    db.doc("mess/roles").onSnapshot(s=>{const r=s.exists?s.data():{};roles={editors:Array.isArray(r.editors)?r.editors:[],admins:Array.isArray(r.admins)?r.admins:[],links:(r.links&&typeof r.links==="object")?r.links:{}};render();if(settingsOpen()){if(!canManage())showPage(false);else drawAccess()}},()=>{});
-    let registered=false;
-    db.collection("people").limit(200).onSnapshot(s=>{people={};s.docs.forEach(d=>people[d.id]=d.data());
-      if(!registered&&!me.isOwner&&me.canWrite&&me.id&&!people[me.id]){registered=true;db.doc("people/"+me.id).set({seenAt:Date.now()}).catch(()=>{})}render();resolveProfiles();if(settingsOpen())drawAccess()},()=>{});
-    subscribeMonth();
-  }catch(e){mode="gate";render()}
-}
-
-loadLocal();useLocal();render();connect();
+render();
 })();
-
 
 </script>
 </body>

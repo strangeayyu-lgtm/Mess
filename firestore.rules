@@ -2,63 +2,111 @@ rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
 
+    // ---------- helpers ----------
     function signedIn() { return request.auth != null; }
-    function ownerDoc() { return get(/databases/$(database)/documents/mess/owner); }
-    function rolesDoc() { return get(/databases/$(database)/documents/mess/roles); }
+    function uidNow() { return request.auth.uid; }
+    function messPath(messId) { return /databases/$(database)/documents/messes/$(messId); }
+    function personPath(messId, uid) { return /databases/$(database)/documents/messes/$(messId)/people/$(uid); }
 
-    function isOwner() {
-      return signedIn()
-        && exists(/databases/$(database)/documents/mess/owner)
-        && ownerDoc().data.uid == request.auth.uid;
-    }
-    function isAdmin() {
-      return isOwner()
-        || (signedIn()
-            && exists(/databases/$(database)/documents/mess/roles)
-            && request.auth.uid in rolesDoc().data.get('admins', []));
-    }
-    function isEditor() {
-      return isAdmin()
-        || (signedIn()
-            && exists(/databases/$(database)/documents/mess/roles)
-            && request.auth.uid in rolesDoc().data.get('editors', []));
+    function isMember(messId) { return signedIn() && exists(personPath(messId, uidNow())); }
+    function myRole(messId)   { return get(personPath(messId, uidNow())).data.role; }
+    function isHead(messId)   { return isMember(messId) && myRole(messId) == 'head'; }
+    function isAdmin(messId)  { return isMember(messId) && myRole(messId) in ['head', 'admin']; }
+    function isEditor(messId) { return isMember(messId); }   // every member can add purchases
+
+    // ---------- user profiles (name + photo, current mess, pending request) ----------
+    match /users/{uid} {
+      allow read: if signedIn();
+      allow write: if signedIn() && uidNow() == uid;
     }
 
-    // Everything under /mess is readable by signed-in users
-    match /mess/{docId} {
+    // ---------- public mess directory (for the search bar) ----------
+    // Only name + head name are public. Nothing else about the mess.
+    match /directory/{messId} {
       allow read: if signedIn();
-    }
-    // First person to sign in claims ownership; it can never be changed afterwards
-    match /mess/owner {
-      allow create: if signedIn() && request.resource.data.uid == request.auth.uid;
-      allow update: if isOwner() && request.resource.data.uid is string;  // owner can hand over ownership
-      allow delete: if false;
-    }
-    // Members list / name / currency: owner and admins
-    match /mess/config {
-      allow write: if isAdmin();
-    }
-    // Who can add / who is admin / who is linked to which member: owner only
-    match /mess/roles {
-      allow write: if isOwner();
+      allow create: if signedIn()
+        && getAfter(messPath(messId)).data.headUid == uidNow()
+        && request.resource.data.headUid == uidNow();
+      allow update: if isAdmin(messId)
+        && request.resource.data.headUid == resource.data.headUid;
+      allow delete: if isHead(messId);
     }
 
-    // Each person can only write their own "joined" record and profile
-    match /people/{uid} {
-      allow read: if signedIn();
-      allow write: if signedIn() && request.auth.uid == uid;
-    }
-    match /profiles/{uid} {
-      allow read: if signedIn();
-      allow write: if signedIn() && request.auth.uid == uid;
+    // ---------- invite links: /invites/{code} -> which mess ----------
+    // Anyone signed in can open ONE code they already have; nobody can list codes.
+    match /invites/{code} {
+      allow get: if signedIn();
+      allow list: if false;
+      allow create: if signedIn()
+        && request.resource.data.createdBy == uidNow()
+        && request.resource.data.role == 'editor'
+        && getAfter(personPath(request.resource.data.messId, uidNow())).data.role == 'head';
+      allow delete: if isHead(resource.data.messId);
     }
 
-    // Purchases
-    match /purchases/{id} {
-      allow read: if signedIn();
-      allow create: if isEditor() && request.resource.data.addedBy == request.auth.uid;
-      allow update, delete: if isAdmin()
-        || (isEditor() && resource.data.addedBy == request.auth.uid);
+    // ---------- a mess ----------
+    match /messes/{messId} {
+      allow read: if isMember(messId);
+      // Whoever creates a mess is its head
+      allow create: if signedIn() && request.resource.data.headUid == uidNow();
+      // Head and admins edit name, logo, currency, member names.
+      // Only the head can change who the head is, the invite code or default role.
+      allow update: if isAdmin(messId)
+        && (isHead(messId)
+            || !request.resource.data.diff(resource.data).affectedKeys()
+                 .hasAny(['headUid', 'inviteCode', 'defaultRole']));
+      allow delete: if isHead(messId);
+
+      // ----- people who use the app in this mess: role lives here -----
+      match /people/{uid} {
+        allow read: if isMember(messId);
+
+        allow create: if signedIn() && request.resource.data.role in ['head', 'admin', 'editor', 'viewer'] && (
+          // 1. The head adds themselves while creating the mess
+          (uid == uidNow()
+            && request.resource.data.role == 'head'
+            && getAfter(messPath(messId)).data.headUid == uidNow())
+          // 2. Someone joins with a valid invite link of THIS mess, with the role the head chose for that link
+          || (uid == uidNow()
+            && request.resource.data.code is string
+            && exists(/databases/$(database)/documents/invites/$(request.resource.data.code))
+            && get(/databases/$(database)/documents/invites/$(request.resource.data.code)).data.messId == messId
+            && request.resource.data.role == get(/databases/$(database)/documents/invites/$(request.resource.data.code)).data.role)
+          // 3. The head approves a join request
+          || (isHead(messId) && request.resource.data.role != 'head')
+        );
+
+        // Only the head makes / removes admins. A person may only change their own display name.
+        allow update: if (isHead(messId) && uid != uidNow() && request.resource.data.role in ['admin', 'editor'])
+          || (uid == uidNow()
+              && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['name']));
+
+        // The head removes anyone; admins remove normal members; anyone except the head can leave.
+        allow delete: if (isHead(messId) && uid != uidNow())
+          || (isAdmin(messId) && uid != uidNow() && resource.data.role in ['editor', 'viewer'])
+          || (uid == uidNow() && resource.data.role != 'head');
+      }
+
+      // ----- join requests from the search bar: go ONLY to the head -----
+      match /requests/{uid} {
+        allow read: if (signedIn() && uid == uidNow()) || isHead(messId);
+        allow create: if signedIn() && uid == uidNow() && !isMember(messId);
+        allow delete: if (signedIn() && uid == uidNow()) || isHead(messId);
+      }
+
+      // ----- purchases -----
+      match /purchases/{id} {
+        allow read: if isMember(messId);
+        allow create: if isEditor(messId)
+          && request.resource.data.addedBy == uidNow()
+          && request.resource.data.amount is number
+          && request.resource.data.amount > 0;
+        allow update: if isAdmin(messId)
+          || (isEditor(messId) && resource.data.addedBy == uidNow()
+              && request.resource.data.addedBy == uidNow());
+        allow delete: if isAdmin(messId)
+          || (isEditor(messId) && resource.data.addedBy == uidNow());
+      }
     }
   }
 }
