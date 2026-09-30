@@ -251,6 +251,7 @@ select.input{appearance:auto}
 .err{color:var(--neg);font-size:13px;min-height:18px;margin:-4px 0 8px}
 .person .btn.sm+.btn.sm{margin-left:0}
 
+[hidden]{display:none!important}
 </style>
 </head>
 <body>
@@ -335,8 +336,8 @@ const me=()=>S.user&&S.people[S.user.uid];
 const role=()=>me()?me().role:null;
 const isHead=()=>role()==="head";
 const isAdmin=()=>["head","admin"].includes(role());
-const canAdd=()=>!!role();
-const canEditP=p=>isAdmin()||(canAdd()&&p.addedBy===S.user.uid);
+const canAdd=()=>isAdmin();
+const canEditP=p=>isAdmin();
 const ROLE_LABEL={head:"Mess head",admin:"Admin",editor:"Member",viewer:"Member"};
 
 /* invite code from link (kept through sign-in) */
@@ -649,7 +650,7 @@ function mainHTML(){
       return `<div class="bal"><div class="av" style="background:${b.m.color}">${esc((b.m.name[0]||"?").toUpperCase())}</div><div class="n">${esc(b.m.name)}</div><div class="r">paid ${fmt(b.paid)}<span class="d ${cls}">${cls==="zero"?"settled":fmtSigned(b.bal)}</span></div></div>`}).join("")+`</div>`;
     h+=`<div class="card"><div class="label">Month summary</div><div class="sum"><div><strong>${D.list.length}</strong><span class="label" style="letter-spacing:.16em">Purchases</span></div><div><strong>${fmt(D.total)}</strong><span class="label" style="letter-spacing:.16em">Total</span></div><div><strong>${fmt(D.share)}</strong><span class="label" style="letter-spacing:.16em">Per head</span></div></div></div>`;
   }
-  if(!canAdd())h+=`<div class="zero" style="text-align:center;font-size:13px">You can view this mess. The mess head decides who can add purchases.</div>`;
+  if(!canAdd())h+=`<div class="zero" style="text-align:center;font-size:13px">You can view this mess. Only the mess head and admins add purchases.</div>`;
   return h+`</main>`;
 }
 function bindMain(){
@@ -764,20 +765,12 @@ function drawSettingsLive(){
 function drawInvite(){
   const M=S.mess;if(!M)return;
   const url=inviteUrl(M.inviteCode);
-  $("#setInvite").innerHTML=`<div class="help" style="margin-bottom:10px">Share this link. People who open it sign in and join <b>${esc(M.name)}</b> as members. Only this mess, only through your link.</div>
+  $("#setInvite").innerHTML=`<div class="help" style="margin-bottom:10px">This is your permanent invite link. Anyone who opens it signs in and joins <b>${esc(M.name)}</b> as a member.</div>
     <div class="linkbox mono">${esc(url)}</div>
     <div style="display:flex;gap:8px;margin-top:10px"><button class="btn" id="invCopy" style="flex:1">Copy link</button><a class="btn primary" id="invWa" target="_blank" rel="noopener" style="flex:1;text-decoration:none;border-radius:14px;padding:11px">WhatsApp</a></div>
-    <button class="linkbtn" id="invNew" style="margin:12px 0 0">Make a new link (old link stops working)</button>`;
+`;
   $("#invWa").href="https://wa.me/?text="+encodeURIComponent("Join our mess \""+M.name+"\" on Mess Ledger: "+url);
   $("#invCopy").onclick=()=>{(navigator.clipboard?navigator.clipboard.writeText(url):Promise.reject()).then(()=>toast("Link copied"),()=>window.prompt("Copy this link",url))};
-  $("#invNew").onclick=e=>armConfirm(e.currentTarget,"Tap again to make a new link",()=>newInvite("editor"));
-}
-async function newInvite(roleForLink){
-  const M=S.mess,code=genCode(),b=fs.batch();
-  b.set(fs.collection("invites").doc(code),{messId:S.messId,role:roleForLink,createdBy:S.user.uid,createdAt:Date.now()});
-  if(M.inviteCode)b.delete(fs.collection("invites").doc(M.inviteCode));
-  b.update(messRef(S.messId),{inviteCode:code,defaultRole:roleForLink});
-  try{await b.commit();toast("New invite link ready")}catch(e){toast(failMsg(e))}
 }
 function drawRequests(){
   const box=$("#setRequests");

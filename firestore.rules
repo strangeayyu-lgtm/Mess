@@ -12,7 +12,7 @@ service cloud.firestore {
     function myRole(messId)   { return get(personPath(messId, uidNow())).data.role; }
     function isHead(messId)   { return isMember(messId) && myRole(messId) == 'head'; }
     function isAdmin(messId)  { return isMember(messId) && myRole(messId) in ['head', 'admin']; }
-    function isEditor(messId) { return isMember(messId); }   // every member can add purchases
+    function isEditor(messId) { return isAdmin(messId); }    // only the mess head and admins add purchases
 
     // ---------- user profiles (name + photo, current mess, pending request) ----------
     match /users/{uid} {
@@ -41,7 +41,7 @@ service cloud.firestore {
         && request.resource.data.createdBy == uidNow()
         && request.resource.data.role == 'editor'
         && getAfter(personPath(request.resource.data.messId, uidNow())).data.role == 'head';
-      allow delete: if isHead(resource.data.messId);
+      allow delete: if false;   // each mess head has one permanent link
     }
 
     // ---------- a mess ----------
@@ -49,12 +49,11 @@ service cloud.firestore {
       allow read: if isMember(messId);
       // Whoever creates a mess is its head
       allow create: if signedIn() && request.resource.data.headUid == uidNow();
-      // Head and admins edit name, logo, currency, member names.
-      // Only the head can change who the head is, the invite code or default role.
+      // Head and admins edit name, logo, currency.
+      // Nobody can change who the head is or the permanent invite link.
       allow update: if isAdmin(messId)
-        && (isHead(messId)
-            || !request.resource.data.diff(resource.data).affectedKeys()
-                 .hasAny(['headUid', 'inviteCode', 'defaultRole']));
+        && !request.resource.data.diff(resource.data).affectedKeys()
+             .hasAny(['headUid', 'inviteCode', 'defaultRole']);
       allow delete: if isHead(messId);
 
       // ----- people who use the app in this mess: role lives here -----
@@ -97,15 +96,11 @@ service cloud.firestore {
       // ----- purchases -----
       match /purchases/{id} {
         allow read: if isMember(messId);
-        allow create: if isEditor(messId)
+        allow create: if isAdmin(messId)
           && request.resource.data.addedBy == uidNow()
           && request.resource.data.amount is number
           && request.resource.data.amount > 0;
-        allow update: if isAdmin(messId)
-          || (isEditor(messId) && resource.data.addedBy == uidNow()
-              && request.resource.data.addedBy == uidNow());
-        allow delete: if isAdmin(messId)
-          || (isEditor(messId) && resource.data.addedBy == uidNow());
+        allow update, delete: if isAdmin(messId);
       }
     }
   }
